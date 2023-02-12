@@ -1,0 +1,10 @@
+hdd/*
+!hdd/.gitkeep
+iso/*
+!iso/.gitkeep
+download/*
+!download/.gitkeep
+mnt/*
+!mnt/.gitkeep
+opt/*
+!opt/.gitkeep
