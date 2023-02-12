@@ -1,6 +1,8 @@
 # QEMU playground
 Emulate os with QEMU virtual machine
 
+from an idea of [Nikos Mouzakitis](https://nikosmouzakitis.medium.com/running-ubuntu-in-a-virtual-machine-on-qemu-quick-emulator-1607c10f4ba5)
+
 ## Prerequisites
 ### Ubuntu 22.04
 ### Git
