@@ -44,7 +44,7 @@ Evidence in `out/ubuntu-26.04.html`. A second `install` on the same disk was ref
 *"Disk already used for an installation attempt. Preserved by default."* — which is the retention
 policy working as designed, not a defect.
 
-### Windows 11 — four attempts, the fourth passed
+### Windows 11 — four attempts, the fourth passed, then reproduced
 
 | # | ended | duration | outcome |
 |---|---|---|---|
@@ -64,7 +64,15 @@ $ ./lab agent windows-11 osinfo
   "version-id": "11", "variant-id": "client", "kernel-version": "10.0", "id": "mswindows"
 ```
 
-Evidence in `out/windows-11.html`, which keeps all four attempts.
+| 5 | 22:52 | **2,034 s** | **passed (unattended)**, first try, from a wiped disk |
+
+Evidence in `out/windows-11.html`, which keeps every attempt.
+
+Run 5 is the one that makes the rest mean something: both profiles were wiped and
+reinstalled from scratch, in parallel on the same host, with every fix already in
+place. It passed on the first attempt in essentially the same time as run 4 (2,034 s
+against 2,021 s), so the flow is reproducible rather than lucky. Ubuntu, reinstalled
+alongside it, passed in 371 s again.
 
 **The progression matters more than the final green.** Attempts 1 and 2 died before the guest
 could say anything at all. Attempt 3 is the first in which the seed reached the bootstrap and the
