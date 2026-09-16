@@ -26,7 +26,7 @@ DEFAULTS = dict(LAB_USER='labuser', LAB_PASSWORD='', LAB_LOCALE='it_IT.UTF-8',
     LAB_OVMF_CODE='/usr/share/OVMF/OVMF_CODE_4M.ms.fd',
     LAB_OVMF_VARS='/usr/share/OVMF/OVMF_VARS_4M.ms.fd',
     LAB_QGA_MSI='', LAB_QGA_SHA256='', LAB_QGA_SOURCE='', LAB_LANG='en',
-    LAB_VNC_PORT='5940')
+    LAB_VNC_PORT='5940', LAB_DESKTOP='0', LAB_AUDIO='none')
 
 class LabError(Exception):
     pass
@@ -258,6 +258,10 @@ class Lab:
                 raise LabError(f'Invalid {key}')
         if self.cfg['LAB_ACCEL'] not in ('kvm', 'tcg'):
             raise LabError('LAB_ACCEL must be kvm or tcg')
+        if self.cfg['LAB_AUDIO'] not in ('none', 'pipewire', 'pa', 'alsa', 'jack', 'oss', 'dbus', 'sdl'):
+            raise LabError('LAB_AUDIO must be none or a QEMU audio backend (see qemu-system-x86_64 -audiodev help)')
+        if self.cfg['LAB_DESKTOP'] not in ('0', '1'):
+            raise LabError('LAB_DESKTOP must be 0 or 1')
         if self.cfg['LAB_LANG'] not in ('en', 'it'):
             raise LabError('LAB_LANG must be en or it')
         try:

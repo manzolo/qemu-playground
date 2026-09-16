@@ -246,7 +246,17 @@ def qemu_command(lab, installing=False):
            '-device', 'e1000e,netdev=net' if windows else 'virtio-net-pci,netdev=net',
            '-chardev', f'socket,path={lab.qga},server=on,wait=off,id=agent']
     if lab.vnc:
-        cmd += ['-vnc', f'127.0.0.1:{lab.vnc - 5900}']
+        # A tablet, not the default PS/2 mouse: VNC sends absolute coordinates, and
+        # without an absolute device the guest pointer drifts away from the real one.
+        # usb-tablet is plain HID, so neither guest needs a driver for it.
+        cmd += ['-vnc', f'127.0.0.1:{lab.vnc - 5900}',
+                '-device', 'qemu-xhci,id=usb', '-device', 'usb-tablet,bus=usb.0']
+    if cfg['LAB_AUDIO'] != 'none':
+        # Off by default: the guest plays through the host's audio daemon, which a
+        # headless host or a CI runner does not have, and a missing backend stops
+        # QEMU from starting at all.
+        cmd += ['-audiodev', f'{cfg["LAB_AUDIO"]},id=snd0',
+                '-device', 'ich9-intel-hda', '-device', 'hda-duplex,audiodev=snd0']
     if windows:
         cmd += ['-device', 'isa-serial,chardev=agent,index=1',
                 '-global', 'driver=cfi.pflash01,property=secure,value=on',

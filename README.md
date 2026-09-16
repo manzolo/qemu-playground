@@ -47,16 +47,21 @@ guest ever accepts it over SSH, which is key-only.
 ./lab                        # interactive menu
 ```
 
-The menu's first entry is always the prerequisite checker. Missing or inapplicable
-actions stay visible, marked `[blocked]`, with the reason spelled out in the
-preview pane next to the command. `Ctrl-P` switches profiles; `Ctrl-R` refreshes.
+The menu's first entry is always the prerequisite checker. Actions have a quiet
+category column; unavailable actions stay visible in muted text, with the reason
+below the list. The full-width bottom preview shows a shell-ready command without
+a `$` prompt. `Ctrl-Y` opens that command as plain terminal text: select it and
+copy using your terminal's copy shortcut, including when long lines wrap. The
+command uses an absolute path, so it also works from another shell's directory.
+`Tab` toggles the preview. `Ctrl-P` switches profiles; `Ctrl-R` or `F5` refreshes.
 `Ctrl-C` comes back to the menu; `Esc` leaves it, and so does the last entry, so
 quitting never depends on knowing a key. After a command runs, any key returns to
 the list.
 The menu is English by default; `LAB_LANG=it` in `.env` translates its labels,
-states and blocker reasons. Nothing else changes: commands, logs, events and the
-HTML report stay English, and the report keeps its Italian quick guide. With tmux installed the menu opens a commands pane and a live log pane.
-Otherwise fzf's preview displays the command and follows the selected VM's log.
+categories and blocker reasons. Nothing else changes: commands, logs, events and
+the HTML report stay English, and the report keeps its Italian quick guide.
+Logs stay hidden until needed: `Ctrl-L` toggles a small live log pane with tmux.
+Without tmux, it opens the selected VM's log; `Ctrl-C` returns to the menu.
 `LAB_NO_TMUX=1 ./lab` selects that fallback explicitly.
 
 Long menu operations detach into the background. `Ctrl-C` leaves a foreground
@@ -158,6 +163,14 @@ whether anyone is actually attached, and only when a client connects does the
 verdict say the run is no longer provably unattended. Passive screenshots remain
 the default way to watch: they cannot type.
 
+The pinned Ubuntu media is Ubuntu **Server**, so the graphical console shows a text
+login. `LAB_DESKTOP=1` adds `ubuntu-desktop-minimal` after the base install, best
+effort like the guest agent: it needs the network and must never fail an otherwise
+good installation. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
+`alsa`...) to give the guest a sound card played through the host's daemon; it is
+`none` by default, because a headless host has no daemon and naming a backend that
+is not there stops QEMU from starting.
+
 The lab reads `.env` as data; it never executes shell substitutions or sources it.
 Environment variables do not silently override configuration. `.env.example`
 lists all settings. Ubuntu uses port 2400 and Windows 2401 by default, bound only
@@ -183,7 +196,11 @@ text frames containing the serial tail. Unchanged frames are deduplicated.
 
 `report` produces `out/PROFILE.html` with embedded images, chronological commands,
 durations, previous attempts, latest screen alongside the verdict, and a short
-Italian user guide. The same `screenshots/*.png` files can be selected for README
+Italian user guide. Click any screenshot to enlarge it, adjust zoom, fit the
+window or view it at 100%; close with `Esc`. The viewer works offline. Log tails
+and serial text frames have terminal colors and control sequences removed for
+readability; the original evidence files are preserved.
+The same `screenshots/*.png` files can be selected for README
 illustrations after a real run; no staged images are presented as installed VMs.
 [out/example.html](out/example.html) is a small, explicitly synthetic report example.
 PDF dependencies (`markdown`, `weasyprint`, plus WeasyPrint's native libraries) are

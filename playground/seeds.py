@@ -21,6 +21,9 @@ def ubuntu_seed(cfg, public_key, password_hash, token):
             command('timeout 180 curtin in-target -- sh -c "apt-get update && apt-get install -y qemu-guest-agent" '
                     '|| echo "WARNING: optional guest agent package unavailable" > /dev/ttyS0'),
             command('curtin in-target -- systemctl enable serial-getty@ttyS0.service'),
+            *([command('timeout 2400 curtin in-target -- sh -c "apt-get update && apt-get install -y '
+                       'ubuntu-desktop-minimal" || echo "WARNING: optional desktop unavailable" > /dev/ttyS0')]
+              if cfg['LAB_DESKTOP'] == '1' else []),
             command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],
         'error-commands': [command('sync; printf "\\nLAB_FAIL_' + token + '\\n" > /dev/ttyS0')],
         'shutdown': 'poweroff'}}

@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import struct
@@ -365,6 +366,39 @@ class LabCase(unittest.TestCase):
         self.assertEqual(len(entries), 2)
         self.assertEqual({i['enabled'] for i in entries}, {True})
 
+    def test_console_gets_an_absolute_pointer_and_audio_stays_opt_in(self):
+        args = qemu_command(Lab(self.root))
+        # VNC sends absolute coordinates; a PS/2 mouse turns them into a drifting
+        # pointer, so the console always brings a tablet.
+        self.assertIn('usb-tablet,bus=usb.0', args)
+        self.assertNotIn('ich9-intel-hda', args)      # no sound card unless asked
+        atomic(self.root / '.env', 'LAB_VNC_PORT=0\n')
+        self.assertNotIn('usb-tablet,bus=usb.0', qemu_command(Lab(self.root)))
+        atomic(self.root / '.env', 'LAB_AUDIO=pipewire\n')
+        args = qemu_command(Lab(self.root))
+        self.assertIn('pipewire,id=snd0', args)
+        self.assertIn('hda-duplex,audiodev=snd0', args)
+        atomic(self.root / '.env', 'LAB_AUDIO=nonsense\n')
+        with self.assertRaisesRegex(LabError, 'LAB_AUDIO'):
+            Lab(self.root)
+
+    def test_desktop_flag_is_best_effort_and_keeps_the_token_last(self):
+        for flag, expected in (('0', False), ('1', True)):
+            cfg = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_DESKTOP=flag)
+            data = json.loads(ubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']
+            steps = [c[-1] for c in data['late-commands']]
+            self.assertEqual(any('ubuntu-desktop-minimal' in s for s in steps), expected)
+            # A desktop needs the network, so it must never fail a good install, and
+            # the completion token has to stay the last thing that runs.
+            if expected:
+                desktop = next(s for s in steps if 'ubuntu-desktop-minimal' in s)
+                self.assertIn('timeout ', desktop)
+                self.assertIn('|| echo "WARNING', desktop)
+            self.assertIn('LAB_OK_tok', steps[-1])
+        atomic(self.root / '.env', 'LAB_DESKTOP=2\n')
+        with self.assertRaisesRegex(LabError, 'LAB_DESKTOP'):
+            Lab(self.root)
+
     def test_menu_ends_with_a_way_out(self):
         items = menu_items(self.lab)
         self.assertEqual(items[-1]['command'], ['_quit'])
@@ -403,14 +437,43 @@ class LabCase(unittest.TestCase):
 
     def test_menu_rows_align_and_keep_the_reason_out_of_the_label(self):
         items = menu_items(Lab(self.root, 'windows-11'))
-        markers = {row.split(']')[0] + ']' for row in (i['row'] for i in items)}
-        self.assertLessEqual(markers, {'[done]', '[todo]', '[blocked]'})
+        for item in items:
+            self.assertTrue(item['row'].startswith(item['group']))
+            self.assertNotRegex(item['row'], r'\[(done|todo|blocked)\]')
         # Every row starts its label at the same column, so nothing needs truncating.
         columns = {i['row'].index(i['label']) for i in items}
         self.assertEqual(len(columns), 1, sorted(i['row'] for i in items))
         blocked = next(i for i in items if not i['enabled'])
         self.assertNotIn(blocked['reason'], blocked['row'])
         self.assertIn(blocked['reason'], blocked['state'])
+
+    def test_copyable_command_matches_preview_and_background_execution(self):
+        # A path containing spaces and shell syntax must survive a copy/paste.
+        root = self.root / 'lab space $(nothing)'
+        root.mkdir()
+        shutil.copytree(self.root / 'profiles', root / 'profiles')
+        lab = Lab(root)
+        items = menu_items(lab)
+        for action in ('iso', 'ssh', '_quit'):
+            item = next(i for i in items if i['command'][0] == action)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = main(['--root', str(root), '_command', lab.vm, item['id']])
+            self.assertEqual(code, 0)
+            line = out.getvalue().rstrip('\n')
+            if action == '_quit':
+                self.assertEqual(line, '')
+                continue
+            expected = [str(root / 'lab')] + item['command']
+            if item['background']:
+                expected.append('--background')
+            self.assertEqual(shlex.split(line), expected)
+            self.assertNotIn('\n', line)
+            preview = io.StringIO()
+            with contextlib.redirect_stdout(preview):
+                self.assertEqual(main(['--root', str(root), '_preview', lab.vm, item['id']]), 0)
+            self.assertEqual(preview.getvalue().splitlines()[0], line)
+        self.assertFalse((root / 'work').exists())
 
     def test_language_flag_defaults_to_english_and_translates_menu_only(self):
         self.assertEqual(Lab(self.root).cfg['LAB_LANG'], 'en')
@@ -488,6 +551,47 @@ class LabCase(unittest.TestCase):
         self.assertIn('Ultima schermata', italian)
         self.assertIn('Guida rapida', italian)            # the Italian guide stays either way
         self.assertIn('Guida rapida', text)
+
+    def test_report_cleans_terminal_controls_without_changing_evidence(self):
+        self.lab.ensure()
+        self.lab.cfg['LAB_PASSWORD'] = 'fixture-secret'
+        raw = ('[\x1b[0;32m  OK  \x1b[0m] Started \x1b[1me2scrub_all.timer\x1b[0m\r\n'
+               '\x1b]0;terminal title\x07'
+               '\x1b]8;;https://example.org\x1b\\link\x1b]8;;\x1b\\\n'
+               '\x9b32mC1 color\x9b0m\n'
+               'typoX\b\t<script>fixture-\x1b[31msecret</script>\x00\x07\n'
+               'progress 10%\rprogress 100%\n')
+        self.lab.serial.write_bytes(raw.encode())
+        frame = self.lab.work / 'screenshots' / 'serial.txt'
+        frame.parent.mkdir(exist_ok=True)
+        frame.write_bytes(raw.encode())
+        atomic(frame.parent / 'timeline.jsonl', json.dumps(dict(time=1, file=frame.name, caption='Serial fallback')) + '\n')
+        self.lab.event(kind='command', command='\x1b[32mcheck\x1b[0m', outcome='\x1b[32mOK\x1b[0m')
+        doc = report(self.lab).read_text()
+        self.assertIn('[  OK  ] Started e2scrub_all.timer\n', doc)
+        self.assertIn('link\nC1 color\ntypo\t&lt;script&gt;', doc)
+        self.assertIn('progress 10%\nprogress 100%', doc)
+        self.assertNotRegex(doc, r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
+        self.assertNotIn('terminal title', doc)
+        self.assertNotIn('fixture-secret', doc)
+        self.assertIn('&lt;script&gt;', doc)
+        self.assertEqual(self.lab.serial.read_bytes(), raw.encode())
+        self.assertEqual(frame.read_bytes(), raw.encode())
+
+    def test_agent_ping_reports_success_only_after_a_reply(self):
+        with patch('playground.cli.agent', return_value={}):
+            code, output = self.invoke('agent', self.lab.vm, 'ping')
+        self.assertEqual(code, 0, output)
+        self.assertIn('Guest agent OK', output)
+        self.assertNotIn('{}', output)
+        with patch('playground.cli.agent', side_effect=LabError('Agent timeout')):
+            code, output = self.invoke('agent', self.lab.vm, 'ping')
+        self.assertNotEqual(code, 0)
+        self.assertIn('Agent timeout', output)
+        self.assertNotIn('Guest agent OK', output)
+        with patch('playground.cli.agent', return_value={'version': 'test'}):
+            code, output = self.invoke('agent', self.lab.vm, 'info')
+        self.assertEqual(json.loads(output), {'version': 'test'})
 
     def test_windows_redownload_never_deletes_before_reporting_missing_url(self):
         lab = Lab(self.root, 'windows-11')
