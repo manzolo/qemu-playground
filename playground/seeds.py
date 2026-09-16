@@ -28,10 +28,6 @@ def ubuntu_seed(cfg, public_key, password_hash, token):
     return '#cloud-config\n' + json.dumps(data, indent=2, ensure_ascii=False) + '\n'
 
 
-def ps_encoded(script):
-    return base64.b64encode(script.encode('utf-16le')).decode()
-
-
 def windows_seed(cfg, public_key, token, template):
     ns = 'urn:schemas-microsoft-com:unattend'
     wcm = 'http://schemas.microsoft.com/WMIConfig/2002/State'
@@ -46,13 +42,16 @@ def windows_seed(cfg, public_key, token, template):
     def component(settings, name):
         return child(settings, 'component', name=name, processorArchitecture='amd64',
                      publicKeyToken='31bf3856ad364e35', language='neutral', versionScope='nonSxS')
+    lang = cfg['LAB_WINDOWS_LANGUAGE']
+    def locales(node):
+        for k in ('InputLocale', 'SystemLocale', 'UILanguage', 'UserLocale'):
+            child(node, k, '0410:00000410' if k == 'InputLocale' and cfg['LAB_KEYBOARD'] == 'it' else
+                  ('0409:00000409' if k == 'InputLocale' else lang))
+        return node
     pe = child(root, 'settings', **{'pass': 'windowsPE'})
     intl = component(pe, 'Microsoft-Windows-International-Core-WinPE')
-    lang = cfg['LAB_WINDOWS_LANGUAGE']
     child(child(intl, 'SetupUILanguage'), 'UILanguage', lang)
-    for k in ('InputLocale', 'SystemLocale', 'UILanguage', 'UserLocale'):
-        child(intl, k, '0410:00000410' if k == 'InputLocale' and cfg['LAB_KEYBOARD'] == 'it' else
-              ('0409:00000409' if k == 'InputLocale' else lang))
+    locales(intl)
     setup = component(pe, 'Microsoft-Windows-Setup')
     dc = child(setup, 'DiskConfiguration')
     disk = child(dc, 'Disk', **{'{' + wcm + '}action': 'add'})
@@ -84,24 +83,29 @@ def windows_seed(cfg, public_key, token, template):
     child(image, 'WillShowUI', 'OnError')
     user = child(setup, 'UserData')
     child(user, 'AcceptEula', 'true')
-    # Empty product key with OnError allows the selected image to install without activation.
-    child(child(user, 'ProductKey'), 'WillShowUI', 'OnError')
+    # An explicitly empty <Key/> is what suppresses the product key page on retail
+    # multi-edition media; the edition still comes from ImageInstall /IMAGE/NAME and
+    # Windows is left unactivated. A ProductKey carrying only WillShowUI does NOT
+    # skip it: Setup stopped forever on the modal "Product Key" page (2026-09-16).
+    key = child(user, 'ProductKey')
+    child(key, 'Key', '')
+    child(key, 'WillShowUI', 'Never')
+    # Nothing runs in specialize on purpose: a RunSynchronousCommand that exits
+    # non-zero there stops Setup on a modal "unexpected restart" dialog forever
+    # (observed 2026-09-16 with a Get-Volume copy step). The bootstrap script is
+    # started from the seed CD at first logon instead.
     special = child(root, 'settings', **{'pass': 'specialize'})
     shell = component(special, 'Microsoft-Windows-Shell-Setup')
     child(shell, 'ComputerName', cfg['LAB_HOSTNAME'])
     child(shell, 'TimeZone', cfg['LAB_WINDOWS_TIMEZONE'])
-    deploy = component(special, 'Microsoft-Windows-Deployment')
-    cmd = child(child(deploy, 'RunSynchronous'), 'RunSynchronousCommand', **{'{' + wcm + '}action': 'add'})
-    child(cmd, 'Order', 1)
-    copy = ("$ErrorActionPreference='Stop'; $s=Get-Volume | Where-Object FileSystemLabel -eq 'QPL_SEED' | "
-            "Select-Object -First 1; if (!$s) {throw 'QPL_SEED not found'}; "
-            "New-Item C:\\ProgramData\\QemuPlayground -ItemType Directory -Force | Out-Null; "
-            "Copy-Item ($s.DriveLetter + ':\\*') C:\\ProgramData\\QemuPlayground -Recurse -Force")
-    child(cmd, 'Path', 'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ' + ps_encoded(copy))
+    locales(component(special, 'Microsoft-Windows-International-Core'))
     oobe = child(root, 'settings', **{'pass': 'oobeSystem'})
+    # International-Core again here, or OOBE stops on the region/keyboard pages.
+    locales(component(oobe, 'Microsoft-Windows-International-Core'))
     shell = component(oobe, 'Microsoft-Windows-Shell-Setup')
     settings = child(shell, 'OOBE')
-    for key in ('HideEULAPage', 'HideOnlineAccountScreens', 'HideWirelessSetupInOOBE'):
+    for key in ('HideEULAPage', 'HideLocalAccountScreen', 'HideOnlineAccountScreens',
+                'HideWirelessSetupInOOBE'):
         child(settings, key, 'true')
     child(settings, 'ProtectYourPC', 3)
     accounts = child(child(shell, 'UserAccounts'), 'LocalAccounts')
@@ -115,14 +119,24 @@ def windows_seed(cfg, public_key, token, template):
     auto = child(shell, 'AutoLogon')
     child(auto, 'Username', cfg['LAB_USER'])
     child(auto, 'Enabled', 'true')
-    child(auto, 'LogonCount', 1)
+    # 999, not 1: an intermediate OOBE reboot must not consume the only autologon
+    # before FirstLogonCommands runs. setup.ps1 clears AutoAdminLogon when it ends.
+    child(auto, 'LogonCount', 999)
     password = child(auto, 'Password')
     child(password, 'Value', cfg['LAB_PASSWORD'])
     child(password, 'PlainText', 'true')
     first = child(child(shell, 'FirstLogonCommands'), 'SynchronousCommand', **{'{' + wcm + '}action': 'add'})
     child(first, 'Order', 1)
-    child(first, 'CommandLine', 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\ProgramData\\QemuPlayground\\setup.ps1')
-    script = template.replace('@PUBLIC_KEY_B64@', base64.b64encode(public_key.strip().encode()).decode()).replace('@TOKEN@', token)
+    # Setup stores FirstLogonCommands as HKLM RunOnce values and silently ignores
+    # any longer than MAX_PATH (260), so this stays one short line that finds the
+    # seed CD by its own drive letter instead of copying anything beforehand.
+    logon = ('cmd.exe /c for %d in (D E F G) do if exist %d:\\setup.ps1 '
+             'powershell.exe -NoProfile -ExecutionPolicy Bypass -File %d:\\setup.ps1')
+    assert len(logon) < 260, len(logon)
+    child(first, 'CommandLine', logon)
+    script = (template.replace('@PUBLIC_KEY_B64@', base64.b64encode(public_key.strip().encode()).decode())
+              .replace('@TOKEN@', token)
+              .replace('@QGA_SHA256@', cfg['LAB_QGA_SHA256'].strip().lower()))
     return ET.tostring(root, encoding='unicode', xml_declaration=True), script
 
 

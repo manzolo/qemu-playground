@@ -135,6 +135,72 @@ class LabCase(unittest.TestCase):
         self.assertLess(script.index("Emit 'LAB_OK_"), script.index('& shutdown.exe'))
         self.assertIn('LAB_FAIL_fixture-token', script)
 
+    def _stop_with_unresponsive_guest(self, vm):
+        """Every graceful channel fails; return the mocked ssh() for inspection."""
+        import itertools
+        from playground import operations
+        lab = Lab(self.root, vm)
+        lab.safe('keys').mkdir(exist_ok=True)
+        lab.safe('keys', 'id_ed25519').write_text('TEST ONLY')
+        with patch.object(Lab, 'pid', return_value=4242), \
+             patch('playground.operations.qmp'), \
+             patch('playground.operations.agent', side_effect=LabError('no agent')), \
+             patch('playground.operations.ssh') as remote, \
+             patch('playground.operations.time.sleep'), \
+             patch('playground.operations.time.monotonic', side_effect=itertools.count(0, 1000)):
+            with self.assertRaisesRegex(LabError, 'stop --force'):
+                operations.stop(lab)
+        return remote
+
+    def test_windows_stop_asks_over_ssh_before_any_signal(self):
+        remote = self._stop_with_unresponsive_guest('windows-11')
+        remote.assert_called_once()
+        self.assertIn('shutdown /s', remote.call_args.args[1][0])
+
+    def test_linux_stop_never_uses_ssh_to_power_off(self):
+        # ACPI powers Linux off in seconds and the lab user has no passwordless sudo.
+        self._stop_with_unresponsive_guest('ubuntu-26.04').assert_not_called()
+
+    def test_specialize_runs_nothing_and_oobe_declares_locales(self):
+        """A non-zero specialize command stops Setup on a modal dialog forever."""
+        template = (self.root / 'templates/windows-setup.ps1').read_text()
+        xml, _ = windows_seed(dict(DEFAULTS, LAB_PASSWORD='fixture'),
+                              'ssh-ed25519 TEST_ONLY', 'fixture-token', template)
+        root = ET.fromstring(xml)
+        ns = {'u': 'urn:schemas-microsoft-com:unattend'}
+        passes = {s.get('pass'): s for s in root.findall('u:settings', ns)}
+        self.assertEqual(passes['specialize'].findall('.//u:RunSynchronous', ns), [])
+        self.assertIsNone(passes['specialize'].find('.//u:RunSynchronousCommand', ns))
+        # International-Core in oobeSystem too, or OOBE stops on region/keyboard.
+        for name in ('specialize', 'oobeSystem'):
+            components = [c.get('name') for c in passes[name].findall('u:component', ns)]
+            self.assertIn('Microsoft-Windows-International-Core', components, name)
+        flags = {e.tag.split('}')[1] for e in passes['oobeSystem'].find('.//u:OOBE', ns)}
+        self.assertLessEqual({'HideEULAPage', 'HideLocalAccountScreen',
+                              'HideOnlineAccountScreens', 'HideWirelessSetupInOOBE'}, flags)
+        # RunOnce silently drops FirstLogonCommands longer than MAX_PATH, and the
+        # script is read from the seed CD rather than a copy made earlier.
+        logon = passes['oobeSystem'].find('.//u:FirstLogonCommands/u:SynchronousCommand/u:CommandLine', ns).text
+        self.assertLess(len(logon), 260, logon)
+        self.assertIn('setup.ps1', logon)
+        self.assertNotIn('ProgramData', logon)
+
+    def test_guest_gates_agent_msi_on_pinned_digest_not_signature(self):
+        digest = 'ab' * 32
+        cfg = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_QGA_SHA256=digest.upper())
+        template = (self.root / 'templates/windows-setup.ps1').read_text()
+        _, script = windows_seed(cfg, 'ssh-ed25519 TEST_ONLY', 'fixture-token', template)
+        # The digest is rendered in lowercase and compared before msiexec runs.
+        self.assertIn("$expected = '" + digest + "'", script)
+        self.assertNotIn('@QGA_SHA256@', script)
+        self.assertLess(script.index('SHA-256 mismatch'), script.index('msiexec.exe'))
+        # Authenticode is reported, never a hard gate: the distributor ships unsigned.
+        self.assertNotIn("throw 'QGA MSI signature is not valid'", script)
+        # An unrendered or absent pin must fail closed rather than skip the check.
+        _, blank = windows_seed(dict(cfg, LAB_QGA_SHA256=''), 'ssh-ed25519 TEST_ONLY', 'fixture-token', template)
+        self.assertIn('No pinned QGA MSI digest', blank)
+        self.assertIn("$expected = ''", blank)
+
     def test_ssh_isolated_and_windows_has_no_posix_shell(self):
         for vm in ('ubuntu-26.04', 'windows-11'):
             lab = Lab(self.root, vm)

@@ -5,11 +5,31 @@ A small, observable QEMU/KVM lab with two profiles: **Ubuntu Server 26.04** and
 No libvirt, system services, personal SSH configuration, or root privileges are
 needed for normal operation.
 
-**Validation status:** the automated tests cover configuration, seed rendering,
+**Validation status:** on 2026-09-16 both profiles were installed unattended on a
+real KVM host and then reached over SSH — Ubuntu 26.04 on the first attempt in
+371 s, Windows 11 on the fourth in 2,021 s, with the three earlier failures kept
+and reported. The successful Windows run carries no `intervention` event: it was
+not assisted. The automated suite (31 tests) covers configuration, seed rendering,
 process ownership, checksum invalidation, cleanup, completion/failure handling,
-QMP framing and screenshots. Full OS installations must be validated on an actual
-KVM host with the matching media; generated answer files are not proof of a
-successful unattended installation. See [validation](docs/VALIDATION.md).
+QMP framing and screenshots. What is still unproven — graceful Windows shutdown
+timing, recovery from a genuinely stalled installer, the tmux layout — is listed
+attempt by attempt in [validation](docs/VALIDATION.md).
+
+## What a finished run looks like
+
+Both images are `work/PROFILE/screenshots/` frames from the run described in
+[validation](docs/VALIDATION.md); nothing is staged.
+
+![Ubuntu 26.04 installed, at the console login prompt](docs/images/ubuntu-26.04-installed.png)
+
+*Ubuntu 26.04 after the unattended installation: the server console at its login prompt. The lab
+does not log in there — it connects over SSH with a dedicated key.*
+
+![Windows 11 desktop during the successful attempt](docs/images/windows-11-installed.png)
+
+*Windows 11 during the attempt that passed: OOBE is over and the unattended setup script is still
+working in the console behind, installing the OpenSSH capability. Screenshots are taken passively
+over QMP, so capturing this costs the guest nothing and sends it no keys.*
 
 ## Start here
 

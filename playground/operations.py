@@ -128,8 +128,13 @@ def iso(lab, action, *, source=None, yes=False, dry=False):
             if not dry:
                 lab.iso.parent.mkdir(exist_ok=True, mode=0o700)
             part = lab.safe('iso', lab.iso.name + '.part')
-            run(['curl', '--fail', '--location', '--show-error', '--connect-timeout', '20',
-                 '--max-time', '7200', '--retry', '3', '-C', '-', '-o', part, url], timeout=7500, dry=dry)
+            # The carriage-return progress meter would collapse the step log into one
+            # unreadable line; report a single summary line instead. Follow progress
+            # with `lab status` or the growing .part file.
+            run(['curl', '--fail', '--location', '--show-error', '--no-progress-meter',
+                 '--connect-timeout', '20', '--max-time', '7200', '--retry', '3',
+                 '-w', 'Downloaded %{size_download} bytes in %{time_total}s (%{speed_download} B/s)\\n',
+                 '-C', '-', '-o', part, url], timeout=7500, dry=dry)
             if not dry:
                 part.replace(lab.iso)
     if not dry:
@@ -195,15 +200,23 @@ def prepare(lab, dry=False):
             shutil.copyfile(lab.cfg['LAB_OVMF_VARS'], firmware)
         tree = lab.safe('work', lab.vm, 'windows-media')
         boot = lab.safe('work', lab.vm, 'installer.iso')
+        # Build into a staging name and rename: an interrupted build must never
+        # leave a truncated installer.iso that the next run treats as complete.
+        staging = lab.safe('work', lab.vm, 'installer.iso.part')
         if not boot.exists():
+            staging.unlink(missing_ok=True)
             tree.mkdir(exist_ok=True, mode=0o700)
             run(['7z', 'x', '-y', '-o' + str(tree), lab.iso], timeout=900)
             candidates = list(tree.rglob('*'))
             efi = next((p for p in candidates if p.name.lower() == 'efisys_noprompt.bin'), None)
             if efi is None:
                 raise LabError('Windows media lacks efisys_noprompt.bin; refusing an installer that requires hidden key presses')
-            run(['xorriso', '-as', 'mkisofs', '-iso-level', '3', '-J', '-joliet-long', '-V', 'QPL_WINDOWS',
-                 '-e', str(efi.relative_to(tree)), '-no-emul-boot', '-o', boot, tree], timeout=900)
+            # -iso-level 3 multi-extent carries the >4 GiB sources/install.wim; UDF is
+            # NOT needed, despite the vendor media using it (see DECISIONS.md).
+            run(['xorriso', '-as', 'mkisofs', '-iso-level', '3', '-J', '-joliet-long',
+                 '-V', 'QPL_WINDOWS', '-e', str(efi.relative_to(tree)), '-no-emul-boot',
+                 '-o', staging, tree], timeout=1800)
+            staging.replace(boot)
     if not lab.disk.exists():
         run(['qemu-img', 'create', '-f', 'qcow2', lab.disk, lab.cfg['LAB_DISK_GB'] + 'G'])
     else:
@@ -406,6 +419,8 @@ def install(lab, dry=False, nudge=False):
 def stop(lab, *, force=False, dry=False):
     if dry:
         print(f'QMP system_powerdown; wait {180 if lab.vm == "windows-11" else 60}s; then QGA shutdown; wait 30s')
+        if lab.vm == 'windows-11':
+            print('Then "shutdown /s /t 0 /f" over the dedicated SSH key; wait 120s.')
         if force:
             print('Then SIGTERM / SIGKILL only to the process verified against this lab paths.')
         return
@@ -419,10 +434,13 @@ def stop(lab, *, force=False, dry=False):
     except (LabError, OSError) as e:
         print(f'ACPI shutdown unavailable: {e}; trying guest agent.', flush=True)
         acpi_wait = 0
+    if acpi_wait:
+        print(f'ACPI powerdown sent; waiting up to {acpi_wait}s for the guest to power off.', flush=True)
     deadline = time.monotonic() + acpi_wait
     while lab.pid() and time.monotonic() < deadline:
         time.sleep(.5)
     if lab.pid():
+        print('Still running after ACPI; trying the guest agent, then waiting 30s.', flush=True)
         try:
             agent(lab, 'shutdown')
         except (LabError, OSError) as e:
@@ -430,8 +448,24 @@ def stop(lab, *, force=False, dry=False):
         deadline = time.monotonic() + 30
         while lab.pid() and time.monotonic() < deadline:
             time.sleep(.5)
+    # A Windows 11 desktop can ignore the ACPI power button outright (observed
+    # 2026-09-16: 180 s with a live session and no shutdown), so ask the guest over
+    # SSH before considering a signal. Linux powers off on ACPI in seconds and its
+    # lab user has no passwordless sudo, so this stays Windows-only.
+    if lab.pid() and lab.vm == 'windows-11' and lab.safe('keys', 'id_ed25519').is_file():
+        print('Still running; asking Windows to shut down over SSH, then waiting 120s.', flush=True)
+        try:
+            ssh(lab, ['shutdown /s /t 0 /f'], timeout=30)
+        except (LabError, OSError, subprocess.TimeoutExpired) as e:
+            print(f'SSH shutdown unavailable: {e}')
+        deadline = time.monotonic() + 120
+        while lab.pid() and time.monotonic() < deadline:
+            time.sleep(.5)
     if lab.pid() and not force:
         raise LabError('Timeout waiting for guest shutdown. VM retained; inspect shot, or explicitly use stop --force.')
+    if lab.pid():
+        # --force still tries the graceful path first, so say why this took minutes.
+        print('Graceful shutdown timed out; signalling the process verified as ours.', flush=True)
     for sig in (signal.SIGTERM, signal.SIGKILL):
         owned = lab.pid()
         if not owned:
@@ -498,7 +532,8 @@ def ssh(lab, command, *, dry=False, timeout=120):
 def clean(lab, targets, *, yes=False, dry=False):
     mapping = {
         'disk': ['disk.qcow2', 'attempt.json', 'prepared.json', 'OVMF_VARS.fd', 'tpm'],
-        'seed': ['seed', 'seed.iso', 'vmlinuz', 'initrd', 'installer.iso', 'windows-media', 'prepared.json'],
+        'seed': ['seed', 'seed.iso', 'vmlinuz', 'initrd', 'installer.iso', 'installer.iso.part',
+                 'windows-media', 'prepared.json'],
         'screenshots': ['screenshots'],
         'logs': ['logs', 'steps.log', 'serial.log', 'qemu.log', 'events.jsonl', 'qemu-command.txt'],
     }

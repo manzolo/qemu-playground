@@ -6,10 +6,15 @@ media matching the pinned **Italian x64** vendor checksum. The answer file selec
 
 1. Download the matching ISO from [Microsoft](https://www.microsoft.com/en-us/software-download/windows11).
 2. Run `./lab config init` and inspect `.env`.
-3. Obtain a signed x64 QEMU guest agent MSI from a trusted distributor. The
+3. Obtain an x64 QEMU guest agent MSI from a trusted distributor. The
    [Fedora virtio-win project](https://github.com/virtio-win/virtio-win-pkg-scripts/blob/master/README.md)
-   documents its distribution channels. Record the distributor-provided expected
-   digest and its provenance, not a checksum invented from an untrusted download.
+   documents its distribution channels; `guest-agent/qemu-ga-x86_64.msi` inside
+   `virtio-win-<version>.iso` is the usual source. Record where the file came from
+   and the digest you computed from that copy, and say so in `LAB_QGA_SOURCE`.
+   **These installers are not Authenticode-signed** (verified for 0.1.285 on
+   2026-09-16), so the pinned SHA-256 is the trust anchor: the host verifies it
+   before staging, and the guest re-verifies it before running msiexec. Signature
+   status is reported on COM1 for the record.
 4. Set `LAB_QGA_MSI`, `LAB_QGA_SHA256` and `LAB_QGA_SOURCE` in `.env`.
 5. Run `./lab doctor`. Install `swtpm` and `ovmf` if missing. The default firmware
    paths use the matching 4 MiB Microsoft-key-enrolled OVMF code/variables pair.
@@ -35,7 +40,9 @@ performance recommendation.
 
 Preparation extracts the vendor ISO and creates UEFI installation media using
 its **efisys_noprompt.bin** boot image. This avoids the "press any key" boot prompt
-without injecting a key. The source ISO remains unchanged and pinned. Allow
+without injecting a key. The rebuild is ISO-9660 at level 3: that carries the
+>4 GiB `sources/install.wim` as a multi-extent file and Windows reads it, even
+though the vendor media uses UDF. The source ISO remains unchanged and pinned. Allow
 roughly twice the source ISO size in additional staging space. If the no-prompt
 boot image is absent, preparation fails clearly; it does not send keys in secret.
 
@@ -53,8 +60,13 @@ Useful commands after the installer has completed and QEMU has exited:
 ```
 
 `stop` waits 180 seconds for ACPI shutdown, then tries QGA and waits another 30
-seconds. Linux waits 60 + 30 seconds. Only explicit `--force` permits host signals;
-PID ownership is checked again and signals use a pidfd to avoid PID reuse.
+seconds, then runs `shutdown /s /t 0 /f` over the dedicated SSH key and waits 120
+more: a Windows 11 desktop can ignore the ACPI power button entirely. Linux waits
+60 + 30 seconds and never uses SSH, because it powers off on ACPI in seconds and
+its lab user has no passwordless sudo. Only explicit `--force` permits host
+signals; PID ownership is checked again and signals use a pidfd to avoid PID reuse.
+`--force` still walks the whole graceful chain first, so it can take minutes; it
+now says which stage it is waiting on.
 
 Sources checked during implementation:
 
