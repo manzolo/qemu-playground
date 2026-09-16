@@ -1,0 +1,8 @@
+{
+  "id": "ubuntu-26.04", "family": "linux",
+  "filename": "ubuntu-26.04-live-server-amd64.iso",
+  "url": "https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso",
+  "sha256": "dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9",
+  "source": "https://releases.ubuntu.com/26.04/SHA256SUMS",
+  "checked": "2026-09-16"
+}

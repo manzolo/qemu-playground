@@ -1,0 +1,8 @@
+{
+  "id": "windows-11", "family": "windows",
+  "filename": "windows-11-italian-x64.iso", "url": null,
+  "sha256": "e72cba0335c8e67ac523f3f997f6d38e441eb06414ce42fd38b08a639abd0d87",
+  "source": "https://www.microsoft.com/en-us/software-download/windows11",
+  "checked": "2026-09-16",
+  "note": "Italian 64-bit vendor table, checked on this date. Download links expire; import the matching image. Never replace the pinned hash with the downloaded file hash."
+}

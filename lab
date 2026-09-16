@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1
+if [[ $# -eq 0 || ${1:-} == menu ]]; then
+    exec bash "$ROOT/scripts/menu.sh"
+fi
+exec python3 -u -m playground.cli --root "$ROOT" "$@"

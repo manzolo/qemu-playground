@@ -1,0 +1,13 @@
+.env
+keys/
+iso/
+work/
+out/*
+!out/.gitkeep
+!out/example.html
+__pycache__/
+*.py[cod]
+.coverage
+
+# Original local brief contains machine-specific personal paths.
+/PROMPT.md

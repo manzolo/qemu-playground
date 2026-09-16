@@ -1,0 +1,144 @@
+"""Render guest installation inputs. No host shell interpolation."""
+import base64
+import json
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from .core import LabError, atomic, run
+
+
+def ubuntu_seed(cfg, public_key, password_hash, token):
+    def command(text):
+        return ['sh', '-c', text]
+    data = {'autoinstall': {
+        'version': 1, 'interactive-sections': [], 'refresh-installer': {'update': False},
+        'locale': cfg['LAB_LOCALE'], 'keyboard': {'layout': cfg['LAB_KEYBOARD']},
+        'timezone': cfg['LAB_TIMEZONE'],
+        'identity': {'hostname': cfg['LAB_HOSTNAME'], 'username': cfg['LAB_USER'], 'password': password_hash},
+        'ssh': {'install-server': True, 'allow-pw': False, 'authorized-keys': [public_key.strip()]},
+        'storage': {'layout': {'name': 'direct'}},
+        'apt': {'geoip': False, 'fallback': 'offline-install'},
+        'late-commands': [
+            command('curtin in-target -- sh -c "apt-get update && apt-get install -y qemu-guest-agent" '
+                    '|| echo "WARNING: optional guest agent package unavailable" > /dev/ttyS0'),
+            command('curtin in-target -- systemctl enable serial-getty@ttyS0.service'),
+            command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],
+        'error-commands': [command('sync; printf "\\nLAB_FAIL_' + token + '\\n" > /dev/ttyS0')],
+        'shutdown': 'poweroff'}}
+    # JSON is valid YAML 1.2; cloud-init accepts it after its identifying header.
+    return '#cloud-config\n' + json.dumps(data, indent=2, ensure_ascii=False) + '\n'
+
+
+def ps_encoded(script):
+    return base64.b64encode(script.encode('utf-16le')).decode()
+
+
+def windows_seed(cfg, public_key, token, template):
+    ns = 'urn:schemas-microsoft-com:unattend'
+    wcm = 'http://schemas.microsoft.com/WMIConfig/2002/State'
+    ET.register_namespace('', ns)
+    ET.register_namespace('wcm', wcm)
+    root = ET.Element('{' + ns + '}unattend')
+    def child(parent, tag, value=None, **attrs):
+        node = ET.SubElement(parent, '{' + ns + '}' + tag, attrs)
+        if value is not None:
+            node.text = str(value)
+        return node
+    def component(settings, name):
+        return child(settings, 'component', name=name, processorArchitecture='amd64',
+                     publicKeyToken='31bf3856ad364e35', language='neutral', versionScope='nonSxS')
+    pe = child(root, 'settings', **{'pass': 'windowsPE'})
+    intl = component(pe, 'Microsoft-Windows-International-Core-WinPE')
+    lang = cfg['LAB_WINDOWS_LANGUAGE']
+    child(child(intl, 'SetupUILanguage'), 'UILanguage', lang)
+    for k in ('InputLocale', 'SystemLocale', 'UILanguage', 'UserLocale'):
+        child(intl, k, '0410:00000410' if k == 'InputLocale' and cfg['LAB_KEYBOARD'] == 'it' else
+              ('0409:00000409' if k == 'InputLocale' else lang))
+    setup = component(pe, 'Microsoft-Windows-Setup')
+    dc = child(setup, 'DiskConfiguration')
+    disk = child(dc, 'Disk', **{'{' + wcm + '}action': 'add'})
+    child(disk, 'DiskID', 0)
+    child(disk, 'WillWipeDisk', 'true')
+    create = child(disk, 'CreatePartitions')
+    for order, typ, size in [(1, 'EFI', 260), (2, 'MSR', 16), (3, 'Primary', None)]:
+        part = child(create, 'CreatePartition', **{'{' + wcm + '}action': 'add'})
+        child(part, 'Order', order)
+        child(part, 'Type', typ)
+        child(part, 'Size' if size else 'Extend', size if size else 'true')
+    modify = child(disk, 'ModifyPartitions')
+    for order, fmt, label in [(1, 'FAT32', 'System'), (3, 'NTFS', 'Windows')]:
+        part = child(modify, 'ModifyPartition', **{'{' + wcm + '}action': 'add'})
+        child(part, 'Order', 1 if order == 1 else 2)
+        child(part, 'PartitionID', order)
+        child(part, 'Format', fmt)
+        child(part, 'Label', label)
+        if order == 3:
+            child(part, 'Letter', 'C')
+    child(dc, 'WillShowUI', 'OnError')
+    image = child(child(setup, 'ImageInstall'), 'OSImage')
+    meta = child(child(image, 'InstallFrom'), 'MetaData', **{'{' + wcm + '}action': 'add'})
+    child(meta, 'Key', '/IMAGE/NAME')
+    child(meta, 'Value', cfg['LAB_WINDOWS_IMAGE'])
+    target = child(image, 'InstallTo')
+    child(target, 'DiskID', 0)
+    child(target, 'PartitionID', 3)
+    child(image, 'WillShowUI', 'OnError')
+    user = child(setup, 'UserData')
+    child(user, 'AcceptEula', 'true')
+    # Empty product key with OnError allows the selected image to install without activation.
+    child(child(user, 'ProductKey'), 'WillShowUI', 'OnError')
+    special = child(root, 'settings', **{'pass': 'specialize'})
+    shell = component(special, 'Microsoft-Windows-Shell-Setup')
+    child(shell, 'ComputerName', cfg['LAB_HOSTNAME'])
+    child(shell, 'TimeZone', cfg['LAB_WINDOWS_TIMEZONE'])
+    deploy = component(special, 'Microsoft-Windows-Deployment')
+    cmd = child(child(deploy, 'RunSynchronous'), 'RunSynchronousCommand', **{'{' + wcm + '}action': 'add'})
+    child(cmd, 'Order', 1)
+    copy = ("$ErrorActionPreference='Stop'; $s=Get-Volume | Where-Object FileSystemLabel -eq 'QPL_SEED' | "
+            "Select-Object -First 1; if (!$s) {throw 'QPL_SEED not found'}; "
+            "New-Item C:\\ProgramData\\QemuPlayground -ItemType Directory -Force | Out-Null; "
+            "Copy-Item ($s.DriveLetter + ':\\*') C:\\ProgramData\\QemuPlayground -Recurse -Force")
+    child(cmd, 'Path', 'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ' + ps_encoded(copy))
+    oobe = child(root, 'settings', **{'pass': 'oobeSystem'})
+    shell = component(oobe, 'Microsoft-Windows-Shell-Setup')
+    settings = child(shell, 'OOBE')
+    for key in ('HideEULAPage', 'HideOnlineAccountScreens', 'HideWirelessSetupInOOBE'):
+        child(settings, key, 'true')
+    child(settings, 'ProtectYourPC', 3)
+    accounts = child(child(shell, 'UserAccounts'), 'LocalAccounts')
+    account = child(accounts, 'LocalAccount', **{'{' + wcm + '}action': 'add'})
+    child(account, 'Name', cfg['LAB_USER'])
+    child(account, 'Group', 'Administrators')
+    for parent in (account,):
+        password = child(parent, 'Password')
+        child(password, 'Value', cfg['LAB_PASSWORD'])
+        child(password, 'PlainText', 'true')
+    auto = child(shell, 'AutoLogon')
+    child(auto, 'Username', cfg['LAB_USER'])
+    child(auto, 'Enabled', 'true')
+    child(auto, 'LogonCount', 1)
+    password = child(auto, 'Password')
+    child(password, 'Value', cfg['LAB_PASSWORD'])
+    child(password, 'PlainText', 'true')
+    first = child(child(shell, 'FirstLogonCommands'), 'SynchronousCommand', **{'{' + wcm + '}action': 'add'})
+    child(first, 'Order', 1)
+    child(first, 'CommandLine', 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\ProgramData\\QemuPlayground\\setup.ps1')
+    script = template.replace('@PUBLIC_KEY_B64@', base64.b64encode(public_key.strip().encode()).decode()).replace('@TOKEN@', token)
+    return ET.tostring(root, encoding='unicode', xml_declaration=True), script
+
+
+def render(lab, token):
+    cfg = lab.cfg
+    if not cfg['LAB_PASSWORD']:
+        raise LabError('Run ./lab config init first, or set LAB_PASSWORD in .env')
+    public = lab.safe('keys', 'id_ed25519.pub').read_text().strip()
+    folder = lab.safe('work', lab.vm, 'seed')
+    folder.mkdir(exist_ok=True, mode=0o700)
+    if lab.vm == 'ubuntu-26.04':
+        hashed = run(['openssl', 'passwd', '-6', '-stdin'], input=cfg['LAB_PASSWORD'] + '\n', capture=True).strip()
+        atomic(folder / 'user-data', ubuntu_seed(cfg, public, hashed, token))
+        atomic(folder / 'meta-data', json.dumps({'instance-id': token, 'local-hostname': cfg['LAB_HOSTNAME']}))
+    else:
+        xml, script = windows_seed(cfg, public, token, (lab.root / 'templates' / 'windows-setup.ps1').read_text())
+        atomic(folder / 'autounattend.xml', xml)
+        atomic(folder / 'setup.ps1', script)
+    return folder
