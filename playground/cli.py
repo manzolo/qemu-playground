@@ -10,7 +10,7 @@ import sys
 import time
 from .core import ACTIVE_LAB, Lab, LabError, PROFILES, busy, confirm, lock, run
 from . import operations as ops
-from .interface import menu_items, status
+from .interface import menu_command, menu_items, menu_row, status
 from .protocol import agent
 from .report import report
 from .screens import shot
@@ -63,9 +63,9 @@ def parser():
     c = command('clean', vm=True)
     c.add_argument('targets', nargs='+', choices=['disk', 'seed', 'screenshots', 'logs', 'keys', 'iso', 'out', 'all'])
     c.add_argument('--yes', action='store_true')
-    for name in ('_menu', '_preview', '_execute', '_keys', '_header'):
+    for name in ('_menu', '_preview', '_command', '_copy_hint', '_execute', '_keys', '_header'):
         c = command(name, vm=True)
-        if name not in ('_menu', '_keys', '_header'):
+        if name not in ('_menu', '_keys', '_header', '_copy_hint'):
             c.add_argument('item', type=int)
     return p
 
@@ -112,7 +112,11 @@ def dispatch(lab, args):
         if dry:
             print(f'QGA {args.command} via {lab.qga}')
         else:
-            print(json.dumps(agent(lab, args.command), indent=2))
+            result = agent(lab, args.command)
+            if args.command == 'ping':
+                print(f'Guest agent OK: {lab.vm} responded to ping.')
+            else:
+                print(json.dumps(result, indent=2))
     elif action == 'shot':
         if dry:
             print(f'QMP screendump via {lab.qmp}; convert PPM -> PNG; open={not args.no_open}; nudge={args.nudge}')
@@ -180,39 +184,43 @@ def main(argv=None):
     args.dry_run = dry
     try:
         lab = Lab(args.root, getattr(args, 'vm', PROFILES[0]))
-        if args.action in ('_keys', '_header'):
+        if args.action in ('_keys', '_header', '_copy_hint'):
             from .interface import header, words
-            print(words(lab)['keys'] if args.action == '_keys' else header(lab))
+            print(header(lab) if args.action == '_header' else words(lab)[args.action[1:]])
             return 0
-        if args.action in ('_menu', '_preview', '_execute'):
+        if args.action in ('_menu', '_preview', '_command', '_execute'):
             items = menu_items(lab)
             if args.action == '_menu':
                 for item in items:
-                    print(f'{item["id"]}\t{item["row"]}')
+                    print(f'{item["id"]}\t{menu_row(item)}')
                 return 0
             if not 0 <= args.item < len(items):
                 raise LabError('Unknown menu item')
             item = items[args.item]
+            if args.action == '_command':
+                print(menu_command(lab, item))
+                return 0
             # The quit entry is the menu's own, not a lab command: 64 tells the Bash
             # loop to stop, so leaving works without knowing which key does it.
             if item['command'] == ['_quit']:
                 print(item['label'], flush=True)
                 return 0 if args.action == '_preview' else 64
-            cmd = [str(lab.root / 'lab')] + item['command']
-            print(item['label'] + ' ' + item['state'], flush=True)
+            cmd = menu_command(lab, item)
             # The preview always shows the command, so the menu teaches the CLI even
             # for an entry that cannot run; executing prints it only when it will run,
             # rather than showing a command line that is about to be refused.
             if args.action == '_preview':
-                print('$ ' + shlex.join(cmd), flush=True)
+                # No prompt or indentation: the entire line can be pasted into a shell.
+                print(cmd, flush=True)
                 from .interface import words
-                print(f'\nLog: {lab.log}\n\n{words(lab)["keys"]}\n{words(lab)["hint"]}')
+                print('\n' + (item['state'] or item['label']))
+                print(words(lab)['hint'])
                 return 0
+            print(item['label'], flush=True)
             if not item['enabled']:
-                # The state line above already carries the reason; repeating it as an
-                # ERROR right underneath just said the same sentence twice.
+                print(item['state'], flush=True)
                 return 1
-            print('$ ' + shlex.join(cmd), flush=True)
+            print('$ ' + cmd, flush=True)
             suffix = ['--background'] if item['background'] else []
             return main(['--root', str(lab.root)] + item['command'] + suffix)
         if args.action in ('install', 'up') and not args.foreground:

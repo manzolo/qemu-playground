@@ -19,14 +19,6 @@ if command -v tmux >/dev/null && [[ -z ${TMUX:-} && -z ${LAB_NO_TMUX:-} ]]; then
     exec tmux new-session -s "qemu-playground-$$" "$launch"
 fi
 pane=''
-if [[ -n ${TMUX:-} ]]; then
-    # Only the background workers' logs: menu.log would echo, line for line, what the
-    # foreground command is already printing in the pane above.
-    printf -v follow 'tail -n 20 -F %q %q' "$ROOT/work/ubuntu-26.04/steps.log" "$ROOT/work/windows-11/steps.log"
-    # Split below, never beside: a side-by-side log pane halves the width fzf has
-    # for labels, and the preview then halves what is left.
-    pane="$(tmux split-window -d -v -p 32 -P -F '#{pane_id}' "$follow")"
-fi
 cleanup() {
     if [[ -n $pane ]]; then tmux kill-pane -t "$pane" 2>/dev/null || true; fi
 }
@@ -35,21 +27,19 @@ trap ':' INT
 profile=ubuntu-26.04
 while true; do
     export LAB_MENU_PROFILE="$profile"
-    # With a tmux log pane the preview would only duplicate it; without tmux the
-    # preview is the only place the log can scroll.
     # shellcheck disable=SC2016
     preview='"$ROOT/lab" _preview "$LAB_MENU_PROFILE" {1}'
-    if [[ -z $pane ]]; then
-        # shellcheck disable=SC2016
-        preview+='; timeout 300 tail -n 20 -F "$ROOT/work/$LAB_MENU_PROFILE/steps.log"'
-    fi
     selection=''
-    # --layout=reverse keeps step 1 at the top; --height=100% stops the previous
-    # header scrolling into the next draw; a narrower preview leaves the labels whole.
-    selection="$("$ROOT/lab" _menu "$profile" | fzf --delimiter=$'\t' --with-nth=2.. \
-        --prompt='lab > ' --layout=reverse --height=100% --border --info=inline \
+    # Full-width preview, with no side borders to get mixed into copied commands.
+    # Leave mouse selection to the terminal; Ctrl-Y offers native soft wrapping too.
+    selection="$("$ROOT/lab" _menu "$profile" | fzf --ansi --delimiter=$'\t' --with-nth=2.. \
+        --prompt=' / ' --layout=reverse --height=100% --border=none --info=hidden \
+        --no-mouse --no-hscroll --no-sort --cycle --pointer='›' \
+        --color='fg:-1,bg:-1,fg+:15,bg+:24,hl:110,hl+:159,header:109,prompt:110,pointer:117,border:238' \
         --header="$("$ROOT/lab" _header "$profile")" --header-first \
-        --expect=ctrl-p,ctrl-r,ctrl-q,esc --preview="$preview" --preview-window='right:38%:wrap')" || {
+        --bind='tab:toggle-preview' \
+        --expect=ctrl-p,ctrl-r,f5,ctrl-y,ctrl-l,ctrl-q,esc \
+        --preview="$preview" --preview-window='down:6:wrap:border-top')" || {
         code=$?
         # Listing esc under --expect is what separates it from Ctrl-C: fzf reports both
         # as 130 otherwise, which is why this used to need an extra chooser. Now Esc
@@ -70,10 +60,35 @@ while true; do
         if [[ $profile == ubuntu-26.04 ]]; then profile=windows-11; else profile=ubuntu-26.04; fi
         continue
     fi
-    [[ $key == ctrl-r ]] && continue
+    [[ $key == ctrl-r || $key == f5 ]] && continue
+    if [[ $key == ctrl-l ]]; then
+        if [[ -n ${TMUX:-} ]]; then
+            if [[ -n $pane ]]; then
+                tmux kill-pane -t "$pane" 2>/dev/null || true
+                pane=''
+            else
+                printf -v follow 'tail -n 12 -F %q %q' "$ROOT/work/ubuntu-26.04/steps.log" "$ROOT/work/windows-11/steps.log"
+                pane="$(tmux split-window -d -v -l 8 -P -F '#{pane_id}' "$follow")" || pane=''
+            fi
+        else
+            clear
+            printf 'Live log · %s · Ctrl-C → menu\n\n' "$profile"
+            tail -n 20 -F "$ROOT/work/$profile/steps.log" || true
+        fi
+        continue
+    fi
     row="${selection#*$'\n'}"
     item="${row%%$'\t'*}"
     [[ $item =~ ^[0-9]+$ ]] || continue
+    if [[ $key == ctrl-y ]]; then
+        clear
+        "$ROOT/lab" _copy_hint "$profile"
+        printf '\n'
+        "$ROOT/lab" _command "$profile" "$item"
+        printf '\n'
+        read -rsn1 _ || true
+        continue
+    fi
     # Start each command on a clean screen: otherwise runs pile on top of each other
     # and it stops being obvious which output belongs to what.
     clear

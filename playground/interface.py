@@ -1,6 +1,5 @@
 """Filesystem-derived menu model shared by Bash and the CLI."""
-import json
-import shutil
+import shlex
 from .core import PROFILES, Lab, busy, port_free, readiness, records
 
 
@@ -27,7 +26,8 @@ def status(lab):
 # changes this chrome. Unknown blocker reasons fall back to their English text.
 TEXT = {
     'en': dict(
-        done='[done]', todo='[todo]', blocked='[blocked]',
+        unavailable='Unavailable',
+        groups=('Setup', 'Media', 'Machine', 'Access', 'Reports', 'Cleanup', 'Menu'),
         busy='an operation is running', running='the VM is already running',
         vm_off='the VM is off', no_disk='no disk yet', no_iso='the ISO is missing',
         no_prep='not prepared yet', used='disk already used; clean it explicitly',
@@ -36,10 +36,11 @@ TEXT = {
         win_console='Windows: use screenshot, ssh or agent instead',
         win_import='import the Microsoft ISO: see docs/WINDOWS.md',
         win_again='import a newer Microsoft ISO',
-        keys='Ctrl-P profile · Ctrl-R refresh · Enter run · Ctrl-C back · Esc quit',
+        keys='Enter run · Ctrl-P profile · Ctrl-R/F5 refresh · Esc quit\nCtrl-Y command to copy · Ctrl-L logs · Tab preview',
         h_on='VM running', h_off='VM stopped', h_busy='operation running',
         h_iso_ok='ISO verified', h_iso_no='ISO missing', h_vnc='console',
-        hint='Every entry is a wrapper around the command shown on the right.',
+        hint='Ctrl-Y opens the command as plain text for copying.',
+        copy_hint='Select the command and copy with your terminal shortcut. Any key returns.',
         doctor='Check and install prerequisites', cfg_show='Show active configuration',
         cfg_init='Create local configuration', iso_get='Download / resume the ISO',
         iso_check='Verify the ISO SHA-256', iso_again='Re-download the ISO',
@@ -55,7 +56,8 @@ TEXT = {
         t_logs='the logs', t_keys='the shared SSH key', t_out='the reports',
         t_all='everything except ISO and keys', quit='Exit the menu'),
     'it': dict(
-        done='[fatto]', todo='[da fare]', blocked='[bloccato]',
+        unavailable='Non disponibile',
+        groups=('Ambiente', 'Supporti', 'Macchina', 'Accesso', 'Report', 'Pulizia', 'Menu'),
         busy='operazione in corso', running='la VM e\' gia\' accesa',
         vm_off='la VM e\' spenta', no_disk='manca il disco', no_iso='manca la ISO',
         no_prep='manca la preparazione', used='disco gia\' usato; pulirlo esplicitamente',
@@ -64,10 +66,11 @@ TEXT = {
         win_console='Windows: usa screenshot, ssh o agent',
         win_import='importa la ISO Microsoft: vedi docs/WINDOWS.md',
         win_again='importa una ISO Microsoft piu\' recente',
-        keys='Ctrl-P profilo · Ctrl-R aggiorna · Invio esegui · Ctrl-C indietro · Esc esci',
+        keys='Invio esegui · Ctrl-P profilo · Ctrl-R/F5 aggiorna · Esc esci\nCtrl-Y comando da copiare · Ctrl-L log · Tab anteprima',
         h_on='VM accesa', h_off='VM spenta', h_busy='operazione in corso',
         h_iso_ok='ISO verificata', h_iso_no='ISO mancante', h_vnc='console',
-        hint='Ogni voce e\' solo un involucro attorno al comando mostrato a destra.',
+        hint='Ctrl-Y apre il comando come testo semplice da copiare.',
+        copy_hint='Seleziona il comando e copia con la scorciatoia del terminale. Un tasto per tornare.',
         doctor='Verifica e installa i prerequisiti', cfg_show='Mostra la configurazione attiva',
         cfg_init='Crea la configurazione locale', iso_get='Scarica / riprendi la ISO',
         iso_check='Verifica lo SHA-256 della ISO', iso_again='Riscarica la ISO',
@@ -105,19 +108,27 @@ def translate(lab, reason):
 
 
 def header(lab):
-    """Two lines above the list: why things are blocked, and how to drive it.
-
-    With the reasons moved into the preview, fifteen entries blocked by one single
-    condition gave no clue what that condition was.
-    """
+    """Compact VM context and shortcuts, without long paths or console URLs."""
     t = words(lab)
-    state = [f'profile: {lab.vm}', t['h_on'] if lab.pid() else t['h_off'],
+    state = [lab.vm, t['h_on'] if lab.pid() else t['h_off'],
              t['h_iso_ok'] if lab.iso_state() == 'verified' else t['h_iso_no']]
     if busy(lab.oplock):
         state.append(t['h_busy'])
-    if lab.vnc:
-        state.append(f'{t["h_vnc"]} vnc://127.0.0.1:{lab.vnc}')
     return ' · '.join(state) + '\n' + t['keys']
+
+
+def menu_command(lab, item):
+    """One shell-safe line, identical to the action dispatched by the menu."""
+    if item['command'] == ['_quit']:
+        return ''
+    suffix = ['--background'] if item['background'] else []
+    return shlex.join([str(lab.root / 'lab')] + item['command'] + suffix)
+
+
+def menu_row(item):
+    """Keep unavailable actions visible, with a quiet category column."""
+    label_color = '90' if not item['enabled'] else '39'
+    return f'\033[90m{item["group"]:<10}\033[{label_color}m{item["label"]}\033[0m'
 
 
 def menu_items(lab):
@@ -134,11 +145,16 @@ def menu_items(lab):
 
     def add(label, cmd, blocked='', done=False, background=False):
         status = 'blocked' if blocked else ('done' if done else 'todo')
-        # The row carries a fixed-width marker so labels line up and never get cut;
-        # the full reason lives in the preview, where there is room for it.
+        category = {
+            'doctor': 0, 'config': 0, 'iso': 1,
+            'prepare': 2, 'install': 2, 'start': 2, 'stop': 2, 'status': 2,
+            'console': 3, 'shot': 3, 'view': 3, 'ssh': 3, 'agent': 3,
+            'report': 4, 'clean': 5, '_quit': 6,
+        }[cmd[0]]
+        group = t['groups'][category]
         items.append(dict(id=str(len(items)), label=label, status=status, reason=blocked,
-                          state=t[status] + (': ' + blocked if blocked else ''),
-                          row=f'{t[status]:<11}{label}', command=cmd,
+                          state=t['unavailable'] + ': ' + blocked if blocked else '',
+                          group=group, row=f'{group:<10}{label}', command=cmd,
                           enabled=not blocked, background=background))
 
     mutation = t['busy'] if active else (t['running'] if running else '')
