@@ -63,7 +63,10 @@ def config(lab, action, dry=False):
 
 
 def iso(lab, action, *, source=None, yes=False, dry=False):
-    if lab.pid():
+    # Same rule as prepare: a dry run writes nothing, so a running VM is none of its
+    # business. Guarding before the dry branch made `up --dry-run` fail on the one
+    # machine where a VM happened to be up, and pass in CI where none ever is.
+    if not dry and lab.pid():
         raise LabError('Stop the owned VM before changing or verifying installation media')
     if action == 'verify':
         print(f'SHA-256: {lab.iso}\nExpected: {lab.profile["sha256"]}\nSource: {lab.profile["source"]}')

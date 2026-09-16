@@ -276,6 +276,8 @@ class LabCase(unittest.TestCase):
 
     def test_dry_runs_stay_printable_while_a_vm_is_running(self):
         with patch.object(Lab, 'pid', return_value=4242):
+            self.assertEqual(self.invoke('iso', 'ubuntu-26.04', 'verify', '--dry-run')[0], 0)
+            self.assertEqual(self.invoke('up', 'ubuntu-26.04', '--dry-run')[0], 0)
             for action in ('prepare', 'install'):
                 code, output = self.invoke(action, 'windows-11', '--dry-run')
                 self.assertEqual(code, 0, output)
