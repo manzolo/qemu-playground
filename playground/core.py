@@ -25,10 +25,44 @@ DEFAULTS = dict(LAB_USER='labuser', LAB_PASSWORD='', LAB_LOCALE='it_IT.UTF-8',
     LAB_WINDOWS_TIMEZONE='W. Europe Standard Time',
     LAB_OVMF_CODE='/usr/share/OVMF/OVMF_CODE_4M.ms.fd',
     LAB_OVMF_VARS='/usr/share/OVMF/OVMF_VARS_4M.ms.fd',
-    LAB_QGA_MSI='', LAB_QGA_SHA256='', LAB_QGA_SOURCE='')
+    LAB_QGA_MSI='', LAB_QGA_SHA256='', LAB_QGA_SOURCE='', LAB_LANG='en',
+    LAB_VNC_PORT='5940')
 
 class LabError(Exception):
     pass
+
+
+PACKAGES = {'qemu-system-x86_64': 'qemu-system-x86', 'qemu-img': 'qemu-utils',
+            'fzf': 'fzf', 'xorriso': 'xorriso', '7z': '7zip', 'genisoimage': 'genisoimage',
+            'python3': 'python3', 'curl': 'curl', 'ssh': 'openssh-client',
+            'ssh-keygen': 'openssh-client', 'openssl': 'openssl', 'swtpm': 'swtpm',
+            'tmux': 'tmux', 'xdg-open': 'xdg-utils'}
+ESSENTIAL = ('qemu-system-x86_64', 'qemu-img', 'xorriso', 'genisoimage', 'curl',
+             'ssh', 'ssh-keygen', 'openssl')
+
+
+def readiness(lab):
+    """Host facts, and nothing printed: `doctor` renders them, the menu states them.
+
+    A menu entry cannot call `doctor` to learn whether it is done, because `doctor`
+    reports as it checks. Both read the same facts from here instead.
+    """
+    tools = {cmd: shutil.which(cmd) for cmd in PACKAGES}
+    firmware = {key: Path(lab.cfg[key]).is_file() for key in ('LAB_OVMF_CODE', 'LAB_OVMF_VARS')}
+    kvm = os.access('/dev/kvm', os.R_OK | os.W_OK)
+    available = next((int(line.split()[1]) // 1024
+                      for line in Path('/proc/meminfo').read_text().splitlines()
+                      if line.startswith('MemAvailable:')), 0)
+    free = shutil.disk_usage(lab.root).free // 2**30
+    essential = ESSENTIAL + (('7z', 'swtpm') if lab.vm == 'windows-11' else ())
+    ready = (all(tools[cmd] for cmd in essential)
+             and (kvm or lab.cfg['LAB_ACCEL'] == 'tcg')
+             and available >= int(lab.cfg['LAB_RAM_MB']) and free >= 10)
+    missing = {PACKAGES[cmd] for cmd, path in tools.items() if not path}
+    if not all(firmware.values()):
+        missing.add('ovmf')
+    return dict(tools=tools, firmware=firmware, kvm=kvm, available=available,
+                free=free, ready=ready, missing=missing)
 
 
 def read_json(path, default=None):
@@ -189,6 +223,9 @@ class Lab:
         self.log = self.work / 'steps.log'
         self.oplock = self.work / 'operation.lock'
         self.port = int(self.cfg['LAB_SSH_PORT']) + (vm == 'windows-11')
+        # Off unless asked for: a graphical console is also a keyboard into the guest.
+        base = int(self.cfg['LAB_VNC_PORT'])
+        self.vnc = base + (vm == 'windows-11') if base else 0
         self.name = 'playground-' + hashlib.sha256(str(self.work).encode()).hexdigest()[:16]
 
     def safe(self, *parts):
@@ -221,6 +258,14 @@ class Lab:
                 raise LabError(f'Invalid {key}')
         if self.cfg['LAB_ACCEL'] not in ('kvm', 'tcg'):
             raise LabError('LAB_ACCEL must be kvm or tcg')
+        if self.cfg['LAB_LANG'] not in ('en', 'it'):
+            raise LabError('LAB_LANG must be en or it')
+        try:
+            vnc = int(self.cfg['LAB_VNC_PORT'])
+        except ValueError:
+            raise LabError('LAB_VNC_PORT must be an integer')
+        if vnc and not 5900 <= vnc <= 5998:
+            raise LabError('LAB_VNC_PORT must be 0 (off) or between 5900 and 5998')
         if any(any(ord(c) < 32 for c in value) for value in self.cfg.values()):
             raise LabError('Configuration values must not contain control characters')
 
@@ -273,12 +318,16 @@ class Lab:
             atomic(cache, json.dumps(dict(fingerprint=fingerprint, digest=digest, expected=expected)))
         return 'verified' if digest == expected else 'SHA-256 MISMATCH: delete or redownload ISO'
 
-    def ssh_banner(self):
+    def ssh_banner(self, timeout=1.0):
+        # The banner normally comes back in about 6 ms, but this answer drives what the
+        # menu says, and a probe that gives up too early makes the state lie: entries
+        # showed [todo] and then refused as [blocked] when a parallel install starved
+        # the guest of CPU. One second is ~150x the usual latency and still bounded.
         if not self.pid():
             return False
         try:
-            with socket.create_connection(('127.0.0.1', self.port), timeout=.3) as s:
-                s.settimeout(.3)
+            with socket.create_connection(('127.0.0.1', self.port), timeout=timeout) as s:
+                s.settimeout(timeout)
                 return s.recv(255).startswith(b'SSH-')
         except OSError:
             return False
@@ -297,6 +346,43 @@ class Lab:
             if int(self.cfg['LAB_RAM_MB']) < 4096 or int(self.cfg['LAB_DISK_GB']) < 64 or int(self.cfg['LAB_CPUS']) < 2:
                 reasons.append('Windows needs 4096 MiB RAM, 64 GiB disk and 2 CPUs')
         return reasons
+
+
+# Typeable on purpose. This password is never accepted by SSH on either guest: it
+# exists so a human can log in at the graphical console, where a 36-character random
+# string is unusable. Upper case, lower case and digits keep it acceptable to Windows
+# even where the local complexity policy is switched on.
+PASSWORD_WORDS = ('Kernel', 'Serial', 'Socket', 'Initrd', 'Casper', 'Console',
+                  'Pflash', 'Virtio', 'Chardev', 'Machine')
+
+
+def lab_password():
+    return f'{secrets.choice(PASSWORD_WORDS)}-{secrets.randbelow(9000) + 1000}'
+
+
+def port_free(port):
+    """Can we still bind this localhost port? Three labs can forward the same one."""
+    with socket.socket() as sock:
+        try:
+            sock.bind(('127.0.0.1', port))
+            return True
+        except OSError:
+            return False
+
+
+def open_file(path):
+    """Hand a produced artefact to the desktop, detached and silenced.
+
+    A viewer's own chatter is not lab diagnostics: inheriting the terminal buries
+    the step log under its warnings, and waiting on it would block the menu.
+    """
+    argv = ['xdg-open', str(path)]
+    print('$ ' + shlex.join(argv), flush=True)
+    if not shutil.which('xdg-open'):
+        print('xdg-open is missing; open it yourself: ' + str(path), flush=True)
+        return
+    subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
 
 
 def confirm(message, yes=False):

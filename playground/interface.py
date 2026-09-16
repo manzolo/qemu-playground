@@ -1,7 +1,7 @@
 """Filesystem-derived menu model shared by Bash and the CLI."""
 import json
 import shutil
-from .core import PROFILES, Lab, busy, records
+from .core import PROFILES, Lab, busy, port_free, readiness, records
 
 
 def status(lab):
@@ -10,48 +10,173 @@ def status(lab):
         disk = item.disk.stat().st_size if item.disk.is_file() else 0
         history = [e for e in records(item.work / 'events.jsonl') if e.get('kind') == 'installation']
         used = sum(p.stat().st_blocks * 512 for p in item.work.rglob('*') if p.is_file() and not p.is_symlink()) if item.work.exists() else 0
-        print(f'{vm}:\n  ISO: {item.iso_state()}\n  Disk: {disk} bytes; allocated workspace: {used // 2**20} MiB'
-              f'\n  Owned PID: {item.pid() or "stopped"}; operation: {"active" if busy(item.oplock) else "idle"}'
-              f'\n  SSH 127.0.0.1:{item.port}: {"responding" if item.ssh_banner() else "not responding"}'
-              f'\n  Last installation: {history[-1]["outcome"] if history else "not validated"}')
+        lines = [f'{vm}:',
+                 f'  ISO: {item.iso_state()}',
+                 f'  Disk: {disk} bytes; allocated workspace: {used // 2**20} MiB',
+                 f'  Owned PID: {item.pid() or "stopped"}; operation: {"active" if busy(item.oplock) else "idle"}',
+                 f'  SSH 127.0.0.1:{item.port}: {"responding" if item.ssh_banner() else "not responding"}']
+        if item.vnc:
+            lines.append(f'  Graphical console: vnc://127.0.0.1:{item.vnc}')
+        lines.append(f'  Last installation: {history[-1]["outcome"] if history else "not validated"}')
+        print('\n'.join(lines))
         if item.blockers():
             print('  Preparation blocked: ' + '; '.join(item.blockers()))
 
 
+# User-facing menu strings. Code, logs and reports stay English; LAB_LANG only
+# changes this chrome. Unknown blocker reasons fall back to their English text.
+TEXT = {
+    'en': dict(
+        done='[done]', todo='[todo]', blocked='[blocked]',
+        busy='an operation is running', running='the VM is already running',
+        vm_off='the VM is off', no_disk='no disk yet', no_iso='the ISO is missing',
+        no_prep='not prepared yet', used='disk already used; clean it explicitly',
+        no_serial='no serial log yet', no_ssh='SSH is not answering', no_vnc='LAB_VNC_PORT is 0; set it and start again',
+        taken='port {} is held by something this lab does not own',
+        win_console='Windows: use screenshot, ssh or agent instead',
+        win_import='import the Microsoft ISO: see docs/WINDOWS.md',
+        win_again='import a newer Microsoft ISO',
+        keys='Ctrl-P profile · Ctrl-R refresh · Enter run · Ctrl-C back · Esc quit',
+        h_on='VM running', h_off='VM stopped', h_busy='operation running',
+        h_iso_ok='ISO verified', h_iso_no='ISO missing', h_vnc='console',
+        hint='Every entry is a wrapper around the command shown on the right.',
+        doctor='Check and install prerequisites', cfg_show='Show active configuration',
+        cfg_init='Create local configuration', iso_get='Download / resume the ISO',
+        iso_check='Verify the ISO SHA-256', iso_again='Re-download the ISO',
+        iso_del='Delete the ISO', prepare='Prepare disk, key and seed',
+        install='Install unattended', start='Start the VM', stop='Stop the VM',
+        status='Lab status', console='Serial console (read-only)',
+        shot='Screenshot and open', view='Open the graphical console',
+        shell='Open an SSH session',
+        ssh='Run a demo SSH command',
+        agent='Guest agent: ping', html='Generate and open the HTML report',
+        pdf='Generate and open the PDF report', preview='Preview cleaning disk and seed',
+        clean='Delete {}', t_disk='the disk', t_seed='the seed', t_shots='the screenshots',
+        t_logs='the logs', t_keys='the shared SSH key', t_out='the reports',
+        t_all='everything except ISO and keys', quit='Exit the menu'),
+    'it': dict(
+        done='[fatto]', todo='[da fare]', blocked='[bloccato]',
+        busy='operazione in corso', running='la VM e\' gia\' accesa',
+        vm_off='la VM e\' spenta', no_disk='manca il disco', no_iso='manca la ISO',
+        no_prep='manca la preparazione', used='disco gia\' usato; pulirlo esplicitamente',
+        no_serial='manca il log seriale', no_ssh='SSH non risponde', no_vnc='LAB_VNC_PORT e\' 0; impostalo e riavvia',
+        taken='la porta {} e\' occupata da un processo non nostro',
+        win_console='Windows: usa screenshot, ssh o agent',
+        win_import='importa la ISO Microsoft: vedi docs/WINDOWS.md',
+        win_again='importa una ISO Microsoft piu\' recente',
+        keys='Ctrl-P profilo · Ctrl-R aggiorna · Invio esegui · Ctrl-C indietro · Esc esci',
+        h_on='VM accesa', h_off='VM spenta', h_busy='operazione in corso',
+        h_iso_ok='ISO verificata', h_iso_no='ISO mancante', h_vnc='console',
+        hint='Ogni voce e\' solo un involucro attorno al comando mostrato a destra.',
+        doctor='Verifica e installa i prerequisiti', cfg_show='Mostra la configurazione attiva',
+        cfg_init='Crea la configurazione locale', iso_get='Scarica / riprendi la ISO',
+        iso_check='Verifica lo SHA-256 della ISO', iso_again='Riscarica la ISO',
+        iso_del='Elimina la ISO', prepare='Prepara disco, chiave e seed',
+        install='Installa senza assistenza', start='Avvia la VM', stop='Ferma la VM',
+        status='Stato del laboratorio', console='Console seriale (sola lettura)',
+        shot='Screenshot e apertura', view='Apri la console grafica',
+        shell='Apri una sessione SSH',
+        ssh='Esegui un comando SSH dimostrativo',
+        agent='Guest agent: ping', html='Genera e apri il report HTML',
+        pdf='Genera e apri il report PDF', preview='Anteprima pulizia di disco e seed',
+        clean='Elimina {}', t_disk='il disco', t_seed='il seed', t_shots='gli screenshot',
+        t_logs='i log', t_keys='la chiave SSH condivisa', t_out='i report',
+        t_all='tutto salvo ISO e chiavi', quit='Esci dal menu'),
+}
+
+# Reasons produced by Lab.blockers(), which stays English like the rest of the API.
+REASONS_IT = {
+    'missing ISO': 'manca la ISO',
+    'ISO not verified (run iso verify)': 'ISO non verificata (esegui iso verify)',
+    'SHA-256 MISMATCH: delete or redownload ISO': 'SHA-256 NON CORRISPONDE: elimina o riscarica la ISO',
+    'missing QGA vendor checksum/provenance': 'manca checksum/provenienza dell\'MSI del guest agent',
+    'Windows needs 4096 MiB RAM, 64 GiB disk and 2 CPUs': 'Windows richiede 4096 MiB di RAM, 64 GiB di disco e 2 CPU',
+}
+
+
+def words(lab):
+    return TEXT.get(lab.cfg.get('LAB_LANG', 'en'), TEXT['en'])
+
+
+def translate(lab, reason):
+    if lab.cfg.get('LAB_LANG') != 'it':
+        return reason
+    return '; '.join(REASONS_IT.get(part, part) for part in reason.split('; '))
+
+
+def header(lab):
+    """Two lines above the list: why things are blocked, and how to drive it.
+
+    With the reasons moved into the preview, fifteen entries blocked by one single
+    condition gave no clue what that condition was.
+    """
+    t = words(lab)
+    state = [f'profile: {lab.vm}', t['h_on'] if lab.pid() else t['h_off'],
+             t['h_iso_ok'] if lab.iso_state() == 'verified' else t['h_iso_no']]
+    if busy(lab.oplock):
+        state.append(t['h_busy'])
+    if lab.vnc:
+        state.append(f'{t["h_vnc"]} vnc://127.0.0.1:{lab.vnc}')
+    return ' · '.join(state) + '\n' + t['keys']
+
+
 def menu_items(lab):
+    t = words(lab)
     running = bool(lab.pid())
     active = busy(lab.oplock)
     disk = lab.disk.is_file() and lab.disk.stat().st_size > 0
     seed = lab.seed.is_file()
-    blockers = lab.blockers()
-    reasons = '; '.join(blockers)
-    v = lab.vm
-    items = []
+    reasons = translate(lab, '; '.join(lab.blockers()))
+    # Probed once per redraw: asking twice doubled the cost and let two entries
+    # disagree about the same fact within a single screen.
+    reachable = running and lab.ssh_banner()
+    v, items = lab.vm, []
+
     def add(label, cmd, blocked='', done=False, background=False):
-        state = '[bloccato: ' + blocked + ']' if blocked else ('[fatto]' if done else '[da fare]')
-        items.append(dict(id=str(len(items)), label=label, state=state, command=cmd,
+        status = 'blocked' if blocked else ('done' if done else 'todo')
+        # The row carries a fixed-width marker so labels line up and never get cut;
+        # the full reason lives in the preview, where there is room for it.
+        items.append(dict(id=str(len(items)), label=label, status=status, reason=blocked,
+                          state=t[status] + (': ' + blocked if blocked else ''),
+                          row=f'{t[status]:<11}{label}', command=cmd,
                           enabled=not blocked, background=background))
-    mutation = 'operazione in corso' if active else ('VM accesa' if running else '')
-    add('Verifica e installa prerequisiti', ['doctor', '--install'])
-    add('Mostra configurazione attiva', ['config', 'show'], done=(lab.root / '.env').exists())
-    add('Crea configurazione locale', ['config', 'init'], done=(lab.root / '.env').exists())
-    add('Scarica / riprendi ISO', ['iso', v, 'download'], mutation or ('importa la ISO Microsoft: vedi docs/WINDOWS.md' if v == 'windows-11' else ''), done=lab.iso_state() == 'verified', background=True)
-    add('Verifica SHA-256 ISO', ['iso', v, 'verify'], mutation or ('' if lab.iso.exists() else 'manca la ISO'), done=lab.iso_state() == 'verified', background=True)
-    add('Riscarica ISO', ['iso', v, 'redownload'], mutation or ('importa una nuova ISO Microsoft' if v == 'windows-11' else ''), background=True)
-    add('Elimina ISO', ['iso', v, 'delete'], mutation)
-    add('Prepara disco, chiave e seed', ['prepare', v], mutation or reasons, done=disk and seed, background=True)
-    add('Installa senza assistenza', ['install', v], mutation or reasons or ('' if disk and seed else 'manca preparazione') or
-        ('disco già usato: pulizia esplicita necessaria' if (lab.work / 'attempt.json').exists() else ''), background=True)
-    add('Avvia VM', ['start', v], ('operazione in corso' if active else '') or ('già accesa' if running else '') or ('' if disk else 'manca il disco'))
-    add('Ferma VM', ['stop', v], '' if running else 'VM spenta', background=True)
-    add('Stato del laboratorio', ['status'], done=True)
-    add('Console seriale (sola lettura)', ['console', v], 'Windows: usa screenshot, SSH o agent' if v == 'windows-11' else ('' if lab.serial.exists() else 'manca il log seriale'))
-    add('Screenshot e apertura', ['shot', v], '' if running else 'VM spenta')
-    add('Esegui comando SSH dimostrativo', ['ssh', v, '--', 'ver' if v == 'windows-11' else 'uname -a'], '' if running and lab.ssh_banner() else 'SSH non disponibile')
-    add('Guest agent: ping', ['agent', v, 'ping'], '' if running else 'VM spenta')
-    add('Genera report HTML', ['report', v])
-    add('Genera report PDF', ['report', v, '--pdf'])
-    add('Anteprima pulizia disco e seed', ['clean', v, 'disk', 'seed', '--dry-run'], mutation)
-    for target, label in [('disk', 'disco'), ('seed', 'seed'), ('screenshots', 'screenshot'), ('logs', 'log'), ('keys', 'chiave SSH condivisa'), ('out', 'report'), ('all', 'tutto salvo ISO e chiavi')]:
-        add('Elimina ' + label, ['clean', v, target], mutation)
+
+    mutation = t['busy'] if active else (t['running'] if running else '')
+    windows = v == 'windows-11'
+    add(t['doctor'], ['doctor', '--install'], done=readiness(lab)['ready'])
+    add(t['cfg_show'], ['config', 'show'], done=(lab.root / '.env').exists())
+    add(t['cfg_init'], ['config', 'init'], done=(lab.root / '.env').exists())
+    add(t['iso_get'], ['iso', v, 'download'], mutation or (t['win_import'] if windows else ''),
+        done=lab.iso_state() == 'verified', background=True)
+    add(t['iso_check'], ['iso', v, 'verify'], mutation or ('' if lab.iso.exists() else t['no_iso']),
+        done=lab.iso_state() == 'verified', background=True)
+    add(t['iso_again'], ['iso', v, 'redownload'], mutation or (t['win_again'] if windows else ''), background=True)
+    add(t['iso_del'], ['iso', v, 'delete'], mutation)
+    add(t['prepare'], ['prepare', v], mutation or reasons, done=disk and seed, background=True)
+    add(t['install'], ['install', v], mutation or reasons or ('' if disk and seed else t['no_prep'])
+        or (t['used'] if (lab.work / 'attempt.json').exists() else ''), background=True)
+    # A port held by a process we do not own would otherwise show as a plain [todo]
+    # that fails the moment it is chosen.
+    stolen = '' if running or port_free(lab.port) else t['taken'].format(lab.port)
+    add(t['start'], ['start', v], (t['busy'] if active else '') or (t['running'] if running else '')
+        or stolen or ('' if disk else t['no_disk']))
+    add(t['stop'], ['stop', v], '' if running else t['vm_off'], background=True)
+    add(t['status'], ['status'], done=True)
+    add(t['console'], ['console', v], t['win_console'] if windows
+        else ('' if lab.serial.exists() else t['no_serial']))
+    add(t['shot'], ['shot', v], '' if running else t['vm_off'])
+    add(t['view'], ['view', v], (t['no_vnc'] if not lab.vnc else '') or ('' if running else t['vm_off']))
+    add(t['shell'], ['ssh', v], '' if reachable else t['no_ssh'])
+    add(t['ssh'], ['ssh', v, '--', 'ver' if windows else 'uname -a'],
+        '' if reachable else t['no_ssh'])
+    add(t['agent'], ['agent', v, 'ping'], '' if running else t['vm_off'])
+    add(t['html'], ['report', v, '--open'])
+    add(t['pdf'], ['report', v, '--pdf', '--open'])
+    add(t['preview'], ['clean', v, 'disk', 'seed', '--dry-run'], mutation)
+    for target in ('disk', 'seed', 'screenshots', 'logs', 'keys', 'out', 'all'):
+        short = {'screenshots': 't_shots', 'logs': 't_logs', 'keys': 't_keys',
+                 'out': 't_out', 'all': 't_all'}.get(target, 't_' + target)
+        add(t['clean'].format(t[short]), ['clean', v, target], mutation)
+    # Last, and always available: leaving should not depend on knowing a key.
+    add(t['quit'], ['_quit'])
     return items

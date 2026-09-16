@@ -42,6 +42,7 @@ def parser():
         c.add_argument('--nudge', action='store_true', help='Explicitly send Enter once; mark the attempt assisted')
         c.add_argument('--keep-failed', action='store_true', default=True, help='Always enabled; failed disks are retained')
     command('start', vm=True)
+    command('view', vm=True, help='Open the graphical console, when LAB_VNC_PORT is set')
     c = command('stop', vm=True)
     c.add_argument('--force', action='store_true')
     command('status')
@@ -57,12 +58,14 @@ def parser():
     c.add_argument('--nudge', action='store_true')
     c = command('report', vm=True)
     c.add_argument('--pdf', action='store_true')
+    c.add_argument('--open', action='store_true', dest='open_after',
+                   help='Hand the generated report to the desktop viewer')
     c = command('clean', vm=True)
     c.add_argument('targets', nargs='+', choices=['disk', 'seed', 'screenshots', 'logs', 'keys', 'iso', 'out', 'all'])
     c.add_argument('--yes', action='store_true')
-    for name in ('_menu', '_preview', '_execute'):
+    for name in ('_menu', '_preview', '_execute', '_keys', '_header'):
         c = command(name, vm=True)
-        if name != '_menu':
+        if name not in ('_menu', '_keys', '_header'):
             c.add_argument('item', type=int)
     return p
 
@@ -98,6 +101,8 @@ def dispatch(lab, args):
         ops.install(lab, dry, args.nudge)
     elif action == 'start':
         ops.start(lab, dry=dry)
+    elif action == 'view':
+        ops.view(lab, dry)
     elif action == 'stop':
         ops.stop(lab, force=args.force, dry=dry)
     elif action == 'ssh':
@@ -125,7 +130,7 @@ def dispatch(lab, args):
             if not str(e).startswith('Timeout'):
                 raise
     elif action == 'report':
-        report(lab, args.pdf, dry)
+        report(lab, args.pdf, dry, args.open_after)
     elif action == 'clean':
         ops.clean(lab, args.targets, yes=args.yes, dry=dry)
     elif action == 'up':
@@ -175,23 +180,39 @@ def main(argv=None):
     args.dry_run = dry
     try:
         lab = Lab(args.root, getattr(args, 'vm', PROFILES[0]))
+        if args.action in ('_keys', '_header'):
+            from .interface import header, words
+            print(words(lab)['keys'] if args.action == '_keys' else header(lab))
+            return 0
         if args.action in ('_menu', '_preview', '_execute'):
             items = menu_items(lab)
             if args.action == '_menu':
                 for item in items:
-                    print(f'{item["id"]}\t{item["label"]} {item["state"]}')
+                    print(f'{item["id"]}\t{item["row"]}')
                 return 0
             if not 0 <= args.item < len(items):
                 raise LabError('Unknown menu item')
             item = items[args.item]
+            # The quit entry is the menu's own, not a lab command: 64 tells the Bash
+            # loop to stop, so leaving works without knowing which key does it.
+            if item['command'] == ['_quit']:
+                print(item['label'], flush=True)
+                return 0 if args.action == '_preview' else 64
             cmd = [str(lab.root / 'lab')] + item['command']
             print(item['label'] + ' ' + item['state'], flush=True)
-            print('$ ' + shlex.join(cmd), flush=True)
+            # The preview always shows the command, so the menu teaches the CLI even
+            # for an entry that cannot run; executing prints it only when it will run,
+            # rather than showing a command line that is about to be refused.
             if args.action == '_preview':
-                print(f'\nLog: {lab.log}\n\nCtrl-R refresh · Ctrl-C returns · profile: {lab.vm}')
+                print('$ ' + shlex.join(cmd), flush=True)
+                from .interface import words
+                print(f'\nLog: {lab.log}\n\n{words(lab)["keys"]}\n{words(lab)["hint"]}')
                 return 0
             if not item['enabled']:
-                raise LabError(item['state'])
+                # The state line above already carries the reason; repeating it as an
+                # ERROR right underneath just said the same sentence twice.
+                return 1
+            print('$ ' + shlex.join(cmd), flush=True)
             suffix = ['--background'] if item['background'] else []
             return main(['--root', str(lab.root)] + item['command'] + suffix)
         if args.action in ('install', 'up') and not args.foreground:
