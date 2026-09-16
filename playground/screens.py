@@ -4,7 +4,7 @@ import json
 import struct
 import time
 import zlib
-from .core import LabError, append_json, read_json, records, run, tail
+from .core import LabError, append_json, open_file, read_json, records, tail
 from .protocol import qmp
 
 
@@ -76,5 +76,5 @@ def shot(lab, *, open_image=False, nudge=False, caption='Manual screenshot', ded
     append_json(timeline, dict(time=time.time(), file=target.name, digest=digest, caption=caption))
     print(f'Screenshot: {target}', flush=True)
     if open_image:
-        run(['xdg-open', target], timeout=20)
+        open_file(target)
     return target
