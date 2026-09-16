@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QEMU playground — ubuntu-26.04</title><style>body{font:16px/1.6 system-ui,sans-serif;max-width:1080px;margin:40px auto;padding:0 24px;color:#172333;background:#f6f8fb}h1,h2{line-height:1.2}header,article,figure{background:white;padding:24px;border-radius:12px;margin:20px 0;border:1px solid #dae1ea}header{border-top:6px solid #2766bd}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#101e30;color:#e4eefb;padding:16px;border-radius:8px;font:13px/1.6 monospace}img{max-width:100%;height:auto}table{border-collapse:collapse;width:100%;font-size:14px}td,th{text-align:left;padding:10px;border-bottom:1px solid #dce3ea;vertical-align:top;overflow-wrap:anywhere}code{overflow-wrap:anywhere}.warning{color:#8b3600}.muted{color:#526578}figure{break-inside:avoid}footer{margin-top:32px}@media print{body{margin:0;background:white}pre{color:black;background:#eee}article,figure{border-radius:0}}</style>
+<header><p class="muted">QEMU PLAYGROUND · 2026-09-16T09:31:27+00:00</p><h1>ubuntu-26.04</h1>
+<p><strong>Verdict / Esito: Not yet validated / Non ancora validata</strong></p><p>Evidence report. A prepared disk or reachable SSH port alone is not proof of a completed installation.</p></header>
+<h2>Latest screen / Ultima schermata</h2><figure><pre>EXAMPLE ONLY
+Black framebuffer: this area contains the serial log tail.
+A real run would show actual installer output here.
+</pre><figcaption>2026-09-16T09:13:20+00:00 — Synthetic textual frame, not a guest screenshot</figcaption></figure>
+<article><h2>Commands and outcomes / Comandi ed esiti</h2><table><tr><th>UTC</th><th>Command / detail</th><th>Seconds</th><th>Outcome</th></tr><tr><td>2026-09-16T09:31:27+00:00</td><td><code>Synthetic example — no VM installation was performed</code></td><td>—</td><td>not validated</td></tr></table></article>
+<h2>Timeline</h2><figure><pre>EXAMPLE ONLY
+Black framebuffer: this area contains the serial log tail.
+A real run would show actual installer output here.
+</pre><figcaption>2026-09-16T09:13:20+00:00 — Synthetic textual frame, not a guest screenshot</figcaption></figure>
+<article><h2>Log tails / Code dei log</h2><h3>serial.log</h3><pre></pre><h3>steps.log</h3><pre></pre><h3>qemu.log</h3><pre></pre></article>
+<article lang="it"><h2>Guida rapida</h2><p>Il menu mostra il comando prima di eseguirlo. Le operazioni lunghe proseguono in background: Ctrl-C chiude la visualizzazione e torna al menu.</p>
+<pre>./lab status
+./lab ssh ubuntu-26.04 -- "uname -a"
+./lab shot ubuntu-26.04
+./lab stop ubuntu-26.04
+./lab clean ubuntu-26.04 disk seed --dry-run</pre>
+<p>Gli screenshot sono passivi. Solo <code>--nudge</code> invia un tasto e rende il giro assistito. In caso di timeout il disco e la VM rimangono disponibili per la diagnosi. Per una nuova installazione, ferma la VM e scegli esplicitamente cosa cancellare. ISO e chiavi condivise sono escluse da <code>clean all</code>.</p></article>
+<footer class="muted">No external scripts, fonts or images. Generated from local evidence; logs may contain output of your own guest commands.</footer></html>
