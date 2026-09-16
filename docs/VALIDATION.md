@@ -4,7 +4,7 @@ Implementation checks and the first real-guest run, 2026-09-16.
 
 ## Automated suite
 
-- Standard-library unit/contract suite: **31 tests passed**; configuration and dry-run isolation,
+- Standard-library unit/contract suite: **45 tests passed**; configuration and dry-run isolation,
   vendor hash checking and cache invalidation, XML/JSON seeds, SSH isolation and exit status,
   process identity, selective cleanup and symlink refusal, locks, QMP framing/timeouts,
   token-before-exit handling, failure evidence, passive screenshots, PNG encoding, explicit
@@ -81,6 +81,20 @@ grep '"kind": "intervention"' work/windows-11/events.jsonl
 
 Also observed and not smoothed over: stopping attempt 3's VM with `./lab stop` **timed out after
 220 s** waiting for guest shutdown and needed `stop --force`.
+
+## Continuous integration
+
+Every push runs the standard-library suite and the dry runs on Python 3.10 and 3.14,
+plus the real-QEMU smoke tests under **TCG**, which need no `/dev/kvm`: firmware boots
+for both profiles, concurrent QMP clients, a screenshot encoded to PNG and embedded in
+a report, and a seed built from a synthetic ISO. Seconds, and no guest is installed.
+
+A whole Ubuntu installation with no KVM at all lives in a separate workflow, run on
+a `v*` tag and from a manual button. **It has never run on a GitHub runner**: the same
+install takes 370 s under KVM here and emulation is slower by a large factor, the ISO
+is 2.7 GB and the disk grows past 6 GB on a runner with little spare space. Expect the
+first real run to need its timeout and its disk cleanup tuned. It uploads `out/`, the
+serial log and the event log whatever the outcome, so a failure arrives as evidence.
 
 ## Still not validated
 

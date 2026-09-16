@@ -1,0 +1,61 @@
+# A whole Ubuntu installation with no KVM at all. Deliberately not on push: the same
+# install takes 370 s under KVM here and emulation is slower by a large factor, so it
+# runs when a tag says the repo is claiming to be good, plus a manual button for the
+# times you want the proof without cutting a release.
+name: emulated installation (tags)
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  install:
+    name: Ubuntu 26.04 installed under TCG
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make room for a 2.7 GB ISO and a growing qcow2
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils xorriso genisoimage openssl curl
+      - name: Configure an ephemeral lab
+        run: |
+          cp .env.example .env
+          # Emulated, no graphical console, and a throwaway password: this guest dies
+          # with the runner and never accepts it over SSH anyway.
+          sed -i -e 's/^LAB_ACCEL=.*/LAB_ACCEL=tcg/' \
+                 -e 's/^LAB_VNC_PORT=.*/LAB_VNC_PORT=0/' \
+                 -e 's/^LAB_PASSWORD=.*/LAB_PASSWORD=Ephemeral-0001/' \
+                 -e 's/^LAB_INSTALL_TIMEOUT=.*/LAB_INSTALL_TIMEOUT=18000/' .env
+          chmod 600 .env
+          ./lab config show
+      - name: Download and verify the pinned ISO
+        run: ./lab iso ubuntu-26.04 download
+      - name: Prepare disk, key and seed
+        run: ./lab prepare ubuntu-26.04
+      - name: Install, unattended and emulated
+        run: ./lab install ubuntu-26.04 --foreground
+      - name: Prove the installed guest answers on its own key
+        run: |
+          ./lab start ubuntu-26.04
+          for _ in $(seq 1 60); do ./lab ssh ubuntu-26.04 -- 'true' && break; sleep 10; done
+          ./lab ssh ubuntu-26.04 -- 'uname -a'
+          ./lab stop ubuntu-26.04
+      - name: Evidence, whatever the outcome
+        if: always()
+        run: ./lab report ubuntu-26.04 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulated-install-evidence
+          path: |
+            out/
+            work/ubuntu-26.04/serial.log
+            work/ubuntu-26.04/events.jsonl

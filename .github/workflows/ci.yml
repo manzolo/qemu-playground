@@ -18,3 +18,19 @@ jobs:
       - run: shellcheck lab scripts/menu.sh
       - run: ./lab up ubuntu-26.04 --dry-run
       - run: ./lab install windows-11 --dry-run
+
+  emulated:
+    # Real QEMU under TCG, so it needs no /dev/kvm: firmware boots for both profiles,
+    # concurrent QMP, a screenshot turned into a PNG, the report embedding it, and a
+    # seed built from a synthetic ISO. Seconds, not hours - no guest is installed.
+    name: real QEMU (TCG, no KVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU, firmware and image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf swtpm xorriso genisoimage openssl
+      - run: python3 -m unittest discover -s tests -p smoke_qemu.py -v
+      - run: ./lab doctor || true    # reports findings; a CI runner is not a lab host

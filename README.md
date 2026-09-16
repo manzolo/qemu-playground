@@ -33,6 +33,12 @@ over QMP, so capturing this costs the guest nothing and sends it no keys.*
 
 ## Start here
 
+`./lab config init` prints the console password it generates, something like
+`Virtio-6258`: short enough to type at the graphical console, with an upper case
+letter, a lower case letter and a digit so Windows accepts it even where the local
+complexity policy is on. It is stored in `.env` (0600, gitignored) and neither
+guest ever accepts it over SSH, which is key-only.
+
 ```bash
 ./lab doctor                 # read-only checks and suggested apt command
 ./lab doctor --install       # shows the command and asks before using sudo
@@ -42,8 +48,14 @@ over QMP, so capturing this costs the guest nothing and sends it no keys.*
 ```
 
 The menu's first entry is always the prerequisite checker. Missing or inapplicable
-actions stay visible with their reason. `Ctrl-P` switches profiles; `Ctrl-R`
-refreshes. With tmux installed the menu opens a commands pane and a live log pane.
+actions stay visible, marked `[blocked]`, with the reason spelled out in the
+preview pane next to the command. `Ctrl-P` switches profiles; `Ctrl-R` refreshes.
+`Ctrl-C` comes back to the menu; `Esc` leaves it, and so does the last entry, so
+quitting never depends on knowing a key. After a command runs, any key returns to
+the list.
+The menu is English by default; `LAB_LANG=it` in `.env` translates its labels,
+states and blocker reasons. Nothing else changes: commands, logs, events and the
+HTML report stay English, and the report keeps its Italian quick guide. With tmux installed the menu opens a commands pane and a live log pane.
 Otherwise fzf's preview displays the command and follows the selected VM's log.
 `LAB_NO_TMUX=1 ./lab` selects that fallback explicitly.
 
@@ -119,19 +131,32 @@ receives `sh -lc`. COM1 carries installer diagnostics, not an interactive shell.
 | `install VM [--foreground] [--nudge]` | Bounded installer, passive timeline, retained failures |
 | `up VM [--foreground]` | Configuration through installed guest with working SSH |
 | `start VM` | Boot the disk with no installation media attached |
+| `view VM` | Open the graphical console, when `LAB_VNC_PORT` is set |
 | `stop VM [--force]` | ACPI, then QGA fallback; forced signals only when requested |
 | `status` | Both profiles, owned PID, ISO verification, ports, usage and last result |
+| `ssh VM` | Interactive session on the dedicated key, with a real tty |
 | `ssh VM -- COMMAND` | Dedicated key, no password prompts; actual remote exit status |
 | `agent VM ping\|info\|osinfo\|ip\|shutdown` | QGA without guest networking |
 | `console VM [--timeout 300]` | Read-only Linux serial log |
 | `shot VM [--no-open] [--nudge]` | Diagnostic capture; only explicit nudge sends Enter |
-| `report VM [--pdf]` | Self-contained HTML and optional equivalent PDF |
+| `report VM [--pdf] [--open]` | Self-contained HTML and optional equivalent PDF; `--open` hands it to the desktop viewer |
 | `clean VM TARGET... [--dry-run] [--yes]` | Enumerate and remove only selected paths |
 
 Every command accepts `--dry-run`. Place SSH's host options **before** the VM name,
 for example `./lab ssh --dry-run ubuntu-26.04 -- 'uname -a'`; everything after
 `--` belongs to the guest. `--background` is also available for downloads and
 preparation. SSH remains foreground to preserve its exit status.
+
+A graphical console is available: `LAB_VNC_PORT` defaults to 5940 (Windows takes
+the next port, and 5940 stays clear of libvirt, which hands out 5900 upwards),
+bound to localhost, opened with `lab view VM`. Set it to 0 to switch it off.
+
+Exposing a console and using one are different claims, and the report keeps them
+apart. Opening the port is recorded and reported as "a graphical console was
+exposed; no client connected to it". During an installation the lab also asks QEMU
+whether anyone is actually attached, and only when a client connects does the
+verdict say the run is no longer provably unattended. Passive screenshots remain
+the default way to watch: they cannot type.
 
 The lab reads `.env` as data; it never executes shell substitutions or sources it.
 Environment variables do not silently override configuration. `.env.example`
