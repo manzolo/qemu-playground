@@ -16,8 +16,8 @@ import xml.etree.ElementTree as ET
 import zlib
 
 from playground.cli import main
-from playground.core import DEFAULTS, Lab, LabError, atomic, lock, records, sha256
-from playground.interface import menu_items
+from playground.core import DEFAULTS, Lab, LabError, atomic, lab_password, lock, records, sha256
+from playground.interface import header, menu_items
 from playground.operations import clean, install, prepare, qemu_command, ssh, ssh_command
 from playground.protocol import JsonSocket, agent, qmp
 from playground.report import report
@@ -268,11 +268,161 @@ class LabCase(unittest.TestCase):
 
     def test_disabled_menu_entries_stay_visible(self):
         items = menu_items(Lab(self.root, 'windows-11'))
-        self.assertIn('prerequisiti', items[0]['label'])
+        self.assertIn('prerequisites', items[0]['label'])
         install_item = next(i for i in items if i['command'][0] == 'install')
         self.assertFalse(install_item['enabled'])
-        self.assertIn('missing ISO', install_item['state'])
+        self.assertIn('missing ISO', install_item['reason'])
         self.assertTrue(any(i['command'][0] == 'start' for i in items))
+
+    def test_dry_runs_stay_printable_while_a_vm_is_running(self):
+        with patch.object(Lab, 'pid', return_value=4242):
+            for action in ('prepare', 'install'):
+                code, output = self.invoke(action, 'windows-11', '--dry-run')
+                self.assertEqual(code, 0, output)
+                self.assertIn('qemu-img' if action == 'prepare' else 'qemu-system-x86_64', output)
+            with self.assertRaisesRegex(LabError, 'Stop the VM'):
+                prepare(Lab(self.root, 'windows-11'))
+
+    def test_graphical_console_is_on_by_default_and_can_be_turned_off(self):
+        from playground.operations import view
+        linux, windows = Lab(self.root), Lab(self.root, 'windows-11')
+        self.assertEqual(linux.vnc, 5940)        # clear of libvirt, which starts at 5900
+        self.assertEqual(windows.vnc, 5941)      # same +1 rule as the SSH port
+        self.assertIn('127.0.0.1:41', qemu_command(windows))
+        atomic(self.root / '.env', 'LAB_VNC_PORT=0\n')
+        self.assertNotIn('-vnc', qemu_command(Lab(self.root)))
+        with self.assertRaisesRegex(LabError, 'LAB_VNC_PORT'):
+            view(Lab(self.root))
+        atomic(self.root / '.env', 'LAB_VNC_PORT=70000\n')
+        with self.assertRaisesRegex(LabError, 'LAB_VNC_PORT'):
+            Lab(self.root)
+
+    def test_report_separates_an_exposed_console_from_a_used_one(self):
+        self.lab.ensure()
+        self.lab.event(kind='installation', outcome='passed (unattended)')
+        self.assertNotIn('graphical console', report(self.lab).read_text())
+        self.lab.event(kind='console', outcome='graphical console exposed')
+        exposed = report(self.lab).read_text()
+        self.assertIn('no client connected', exposed)
+        self.assertNotIn('not provably unattended', exposed)   # exposed is not used
+        self.lab.event(kind='console-client', outcome='someone connected')
+        self.assertIn('not provably unattended', report(self.lab).read_text())
+
+    def test_report_can_hand_the_artefact_to_the_desktop(self):
+        self.lab.ensure()
+        with patch('playground.report.open_file') as opener:
+            report(self.lab)
+            opener.assert_not_called()          # never on the internal calls
+            report(self.lab, open_after=True)
+        self.assertEqual(opener.call_args.args[0].suffix, '.html')
+        # The menu offers it, so a produced report is one keystroke from being read.
+        entries = [i['command'] for i in menu_items(self.lab) if i['command'][0] == 'report']
+        self.assertTrue(all('--open' in c for c in entries), entries)
+
+    def test_doctor_entry_reflects_host_readiness(self):
+        """It used to be hard-coded [todo] even on a host that passed every check."""
+        for ready, expected in ((True, 'done'), (False, 'todo')):
+            with patch('playground.interface.readiness', return_value={'ready': ready}):
+                entry = menu_items(Lab(self.root))[0]
+            self.assertEqual(entry['command'][0], 'doctor')
+            self.assertEqual(entry['status'], expected)
+
+    def test_shipped_example_matches_the_built_in_defaults(self):
+        """They are two copies of the same table, and they drifted silently before."""
+        example = {}
+        for line in (SOURCE / '.env.example').read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                key, _, value = line.partition('=')
+                example[key.strip()] = value.strip()
+        self.assertEqual(set(example), set(DEFAULTS))
+        self.assertEqual({k: v for k, v in example.items() if k != 'LAB_PASSWORD'},
+                         {k: v for k, v in DEFAULTS.items() if k != 'LAB_PASSWORD'})
+
+    def test_bare_ssh_opens_an_interactive_session(self):
+        args = ssh_command(self.lab, [])
+        self.assertIn('-t', args)                       # a real tty in the guest
+        self.assertEqual(args[-1], 'labuser@127.0.0.1')  # nothing appended to run
+        self.assertNotIn('sh -lc', ' '.join(args))
+        self.lab.safe('keys').mkdir()
+        self.lab.safe('keys', 'id_ed25519').write_text('TEST ONLY')
+        with patch.object(Lab, 'pid', return_value=123), \
+             patch.object(Path, 'read_bytes', return_value='\0'.join(qemu_command(self.lab)).encode()), \
+             patch('playground.operations.subprocess.run') as proc:
+            proc.return_value.returncode = 0
+            ssh(self.lab, [], timeout=120)
+        # An interactive shell must outlive the one-shot command timeout.
+        self.assertIsNone(proc.call_args.kwargs['timeout'])
+
+    def test_ssh_state_is_probed_once_and_both_entries_agree(self):
+        """Two probes let one screen contradict itself, and a tight one made it lie."""
+        with patch.object(Lab, 'pid', return_value=4242), \
+             patch.object(Lab, 'ssh_banner', return_value=True) as probe:
+            entries = [i for i in menu_items(Lab(self.root)) if i['command'][0] == 'ssh']
+        self.assertEqual(probe.call_count, 1)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual({i['enabled'] for i in entries}, {True})
+
+    def test_menu_ends_with_a_way_out(self):
+        items = menu_items(self.lab)
+        self.assertEqual(items[-1]['command'], ['_quit'])
+        self.assertTrue(items[-1]['enabled'])            # always available
+        last = str(len(items) - 1)
+        self.assertEqual(self.invoke('_execute', self.lab.vm, last)[0], 64)
+        self.assertEqual(self.invoke('_preview', self.lab.vm, last)[0], 0)
+
+    def test_generated_password_can_be_typed_at_a_console(self):
+        seen = {lab_password() for _ in range(50)}
+        self.assertGreater(len(seen), 25)                # not a fixed string
+        for password in seen:
+            self.assertLessEqual(len(password), 12, password)
+            self.assertTrue(password.isascii() and ' ' not in password, password)
+            # Upper, lower and digit: acceptable to Windows even with complexity on.
+            for kind in (str.isupper, str.islower, str.isdigit):
+                self.assertTrue(any(kind(ch) for ch in password), password)
+
+    def test_header_names_the_condition_that_blocks_the_entries(self):
+        """Fifteen entries blocked by one condition must not leave it unstated."""
+        with patch.object(Lab, 'pid', return_value=4242):
+            running = header(Lab(self.root))
+            blocked = [i for i in menu_items(Lab(self.root)) if not i['enabled']]
+        self.assertIn('VM running', running)
+        self.assertIn('ISO missing', running)
+        self.assertTrue(any('running' in i['reason'] for i in blocked), blocked)
+        self.assertIn('VM stopped', header(Lab(self.root)))
+
+    def test_blocked_entry_states_its_reason_exactly_once(self):
+        items = menu_items(Lab(self.root, 'windows-11'))
+        index = next(n for n, i in enumerate(items) if not i['enabled'])
+        code, output = self.invoke('_execute', 'windows-11', str(index))
+        self.assertEqual(code, 1, output)
+        self.assertEqual(output.count(items[index]['reason']), 1, output)
+        self.assertNotIn('$ ', output)   # no command line for something that will not run
+
+    def test_menu_rows_align_and_keep_the_reason_out_of_the_label(self):
+        items = menu_items(Lab(self.root, 'windows-11'))
+        markers = {row.split(']')[0] + ']' for row in (i['row'] for i in items)}
+        self.assertLessEqual(markers, {'[done]', '[todo]', '[blocked]'})
+        # Every row starts its label at the same column, so nothing needs truncating.
+        columns = {i['row'].index(i['label']) for i in items}
+        self.assertEqual(len(columns), 1, sorted(i['row'] for i in items))
+        blocked = next(i for i in items if not i['enabled'])
+        self.assertNotIn(blocked['reason'], blocked['row'])
+        self.assertIn(blocked['reason'], blocked['state'])
+
+    def test_language_flag_defaults_to_english_and_translates_menu_only(self):
+        self.assertEqual(Lab(self.root).cfg['LAB_LANG'], 'en')
+        atomic(self.root / '.env', 'LAB_LANG=it\n')
+        italian = menu_items(Lab(self.root, 'windows-11'))
+        atomic(self.root / '.env', 'LAB_LANG=en\n')
+        english = menu_items(Lab(self.root, 'windows-11'))
+        self.assertIn('prerequisiti', italian[0]['label'])
+        self.assertIn('manca la ISO', italian[0 + [i['command'][0] for i in italian].index('prepare')]['reason'])
+        # Same commands in both languages: only the chrome changes.
+        self.assertEqual([i['command'] for i in italian], [i['command'] for i in english])
+        atomic(self.root / '.env', 'LAB_LANG=de\n')
+        with self.assertRaisesRegex(LabError, 'LAB_LANG'):
+            Lab(self.root)
 
     def test_ppm_preserves_whitespace_valued_pixels(self):
         data = b'P6\n# sample\n2 1\n255\n' + bytes([10, 32, 13, 0, 0, 0])
@@ -329,7 +479,13 @@ class LabCase(unittest.TestCase):
         self.assertIn('first reason', text)
         self.assertIn('&lt;script&gt;', text)
         self.assertNotIn('fixture-secret', text)
-        self.assertIn('Ultima schermata', text)
+        self.assertIn('Latest screen', text)          # English by default
+        self.assertIn('lang="en"', text)
+        atomic(self.root / '.env', 'LAB_LANG=it\n')
+        italian = report(Lab(self.root)).read_text()
+        self.assertIn('Ultima schermata', italian)
+        self.assertIn('Guida rapida', italian)            # the Italian guide stays either way
+        self.assertIn('Guida rapida', text)
 
     def test_windows_redownload_never_deletes_before_reporting_missing_url(self):
         lab = Lab(self.root, 'windows-11')
@@ -362,6 +518,7 @@ class LabCase(unittest.TestCase):
         with patch.object(Lab, 'pid', side_effect=[None, 999, 999, 999]), \
              patch.object(Lab, 'iso_state', return_value='verified'), \
              patch('playground.operations.start'), patch('playground.operations.shot') as capture, \
+             patch('playground.operations.qmp', return_value={'clients': []}), \
              patch('playground.operations.time.monotonic', side_effect=[0, 11, 12]):
             with self.assertRaisesRegex(LabError, 'completion token'):
                 install(self.lab)
@@ -384,6 +541,7 @@ class LabCase(unittest.TestCase):
         with patch.object(Lab, 'pid', side_effect=[None, 999, None, None]), \
              patch.object(Lab, 'iso_state', return_value='verified'), \
              patch('playground.operations.start'), patch('playground.operations.shot'), \
+             patch('playground.operations.qmp', return_value={'clients': []}), \
              patch('playground.operations.time.sleep') as sleep, patch('playground.operations.tpm_stop'):
             install(self.lab)
         sleep.assert_called_once_with(1)

@@ -9,7 +9,7 @@ import socket
 import tempfile
 import time
 import unittest
-from playground.core import Lab, atomic, run, sha256
+from playground.core import Lab, atomic, port_free, run, sha256
 from playground.operations import prepare, start, tpm_stop
 from playground.protocol import qmp
 from playground.screens import shot
@@ -27,7 +27,12 @@ class RealQemu(unittest.TestCase):
             with socket.socket() as port:
                 port.bind(('127.0.0.1', 0))
                 number = port.getsockname()[1] - (vm == 'windows-11')
-            atomic(root / '.env', f'LAB_ACCEL=tcg\nLAB_RAM_MB=1024\nLAB_CPUS=1\nLAB_SSH_PORT={number}\n')
+            # VNC has to live in 5900-5998, so it cannot borrow an ephemeral port like
+            # SSH does: find a free pair, or run without a console rather than collide
+            # with whatever else on this machine already holds one.
+            vnc = next((p for p in range(5900, 5998) if port_free(p) and port_free(p + 1)), 0)
+            atomic(root / '.env', f'LAB_ACCEL=tcg\nLAB_RAM_MB=1024\nLAB_CPUS=1\n'
+                                  f'LAB_SSH_PORT={number}\nLAB_VNC_PORT={vnc}\n')
             lab = Lab(root, vm)
             lab.ensure()
             run(['qemu-img', 'create', '-f', 'qcow2', lab.disk, '64M'])
@@ -36,6 +41,9 @@ class RealQemu(unittest.TestCase):
             try:
                 start(lab)
                 self.assertIsNotNone(lab.pid())
+                if lab.vnc:
+                    self.assertTrue(qmp(lab, 'query-vnc')['enabled'])
+                    self.assertEqual(qmp(lab, 'query-vnc')['clients'], [])
                 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                     results = list(pool.map(lambda _: qmp(lab, 'query-status'), range(6)))
                 self.assertTrue(all(r['status'] == 'running' for r in results))
@@ -74,7 +82,13 @@ class RealQemu(unittest.TestCase):
             # Production profiles and vendor pins are never changed.
             lab.profile['sha256'] = sha256(lab.iso)
             self.assertEqual(lab.iso_state(full=True), 'verified')
+            # A host key pinned by an earlier install of this profile must not survive
+            # a new disk, or every reinstall greets the user with a MITM banner.
+            (root / 'keys').mkdir(exist_ok=True)
+            stale = root / 'keys' / 'known_hosts'
+            stale.write_text(f'[127.0.0.1]:{lab.port} ssh-ed25519 AAAATESTONLYSTALEKEY\n')
             prepare(lab)
+            self.assertNotIn(f'[127.0.0.1]:{lab.port}', stale.read_text())
             self.assertTrue(lab.disk.stat().st_size > 0)
             self.assertTrue(lab.seed.stat().st_size > 0)
             self.assertEqual((lab.work / 'vmlinuz').read_bytes(), (tree / 'vmlinuz').read_bytes())
