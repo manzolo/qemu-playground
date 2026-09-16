@@ -9,54 +9,35 @@ import signal
 import socket
 import subprocess
 import time
-from .core import (Lab, LabError, PROFILES, atomic, busy, confirm, lock, read_json,
-                   records, run, sha256, tail)
+from .core import (Lab, LabError, PACKAGES, PROFILES, atomic, busy, confirm, lock,
+                   lab_password, port_free, read_json, readiness, records, run, sha256, tail)
 from .protocol import agent, qmp
 from .screens import shot
 from .seeds import render
 
 
 def doctor(lab, install=False, dry=False):
-    packages = {'qemu-system-x86_64': 'qemu-system-x86', 'qemu-img': 'qemu-utils',
-                'fzf': 'fzf', 'xorriso': 'xorriso', '7z': '7zip', 'genisoimage': 'genisoimage',
-                'python3': 'python3', 'curl': 'curl', 'ssh': 'openssh-client',
-                'ssh-keygen': 'openssh-client', 'openssl': 'openssl', 'swtpm': 'swtpm',
-                'tmux': 'tmux', 'xdg-open': 'xdg-utils'}
-    missing = set()
-    for cmd, package in packages.items():
-        path = shutil.which(cmd)
+    facts = readiness(lab)
+    for cmd, package in PACKAGES.items():
+        path = facts['tools'][cmd]
         print(f'{"OK" if path else "MISSING":8} {cmd:22} {path or "apt install " + package}')
-        if not path:
-            missing.add(package)
-    kvm = os.access('/dev/kvm', os.R_OK | os.W_OK)
-    print(f'{"OK" if kvm else "BLOCKED":8} /dev/kvm: ' +
-          ('accessible' if kvm else 'enable virtualization/KVM and ask the host administrator for kvm group access; log in again'))
-    for key in ('LAB_OVMF_CODE', 'LAB_OVMF_VARS'):
-        exists = Path(lab.cfg[key]).is_file()
+    print(f'{"OK" if facts["kvm"] else "BLOCKED":8} /dev/kvm: ' +
+          ('accessible' if facts['kvm'] else
+           'enable virtualization/KVM and ask the host administrator for kvm group access; log in again'))
+    for key, exists in facts['firmware'].items():
         print(f'{"OK" if exists else "MISSING":8} {key}: {lab.cfg[key]}')
-        if not exists:
-            missing.add('ovmf')
-    available = next((int(line.split()[1]) // 1024 for line in Path('/proc/meminfo').read_text().splitlines()
-                      if line.startswith('MemAvailable:')), 0)
-    free = shutil.disk_usage(lab.root).free // 2**30
-    print(f'RAM available: {available} MiB; requested per VM: {lab.cfg["LAB_RAM_MB"]} MiB')
-    print(f'Disk free: {free} GiB; qcow2 maximum: {lab.cfg["LAB_DISK_GB"]} GiB (+ ISO/Windows staging)')
+    print(f'RAM available: {facts["available"]} MiB; requested per VM: {lab.cfg["LAB_RAM_MB"]} MiB')
+    print(f'Disk free: {facts["free"]} GiB; qcow2 maximum: {lab.cfg["LAB_DISK_GB"]} GiB (+ ISO/Windows staging)')
     print('Optional PDF: python3-markdown python3-weasyprint (loaded only by report --pdf).')
     print('Optional libguestfs: unreadable /boot/vmlinuz-* prevents appliance creation as a normal user.')
-    if missing:
-        cmd = ['sudo', 'apt-get', 'install', '--'] + sorted(missing)
+    if facts['missing']:
+        cmd = ['sudo', 'apt-get', 'install', '--'] + sorted(facts['missing'])
         print('Suggested: ' + shlex.join(cmd))
         if install:
             if not dry:
                 confirm('Install these prerequisite packages?')
             run(cmd, timeout=1800, dry=dry)
-    essential = ['qemu-system-x86_64', 'qemu-img', 'xorriso', 'genisoimage', 'curl', 'ssh', 'ssh-keygen', 'openssl']
-    if lab.vm == 'windows-11':
-        essential += ['7z', 'swtpm']
-    ready = all(shutil.which(cmd) for cmd in essential)
-    ready = ready and (kvm or lab.cfg['LAB_ACCEL'] == 'tcg')
-    ready = ready and available >= int(lab.cfg['LAB_RAM_MB']) and free >= 10
-    return 0 if ready else 1
+    return 0 if facts['ready'] else 1
 
 
 def config(lab, action, dry=False):
@@ -72,9 +53,13 @@ def config(lab, action, dry=False):
         return
     print(f'Create {path} (0600), with a random local password; never used by SSH.')
     if not dry:
-        password = secrets.token_urlsafe(24) + 'aA1!'
+        password = lab_password()
         source = (lab.root / '.env.example').read_text().replace('LAB_PASSWORD=\n', f'LAB_PASSWORD={password}\n')
         atomic(path, source)
+        # Shown once, here: it is needed at the graphical console, and hunting for it
+        # in a 0600 file is exactly the friction that makes people pick a worse one.
+        print(f'Console password for {lab.cfg["LAB_USER"]}: {password}')
+        print('Stored in .env (0600, gitignored). SSH uses the dedicated key and never this.')
 
 
 def iso(lab, action, *, source=None, yes=False, dry=False):
@@ -158,20 +143,23 @@ def ensure_key(lab):
 
 
 def prepare(lab, dry=False):
-    if lab.pid():
-        raise LabError('Stop the VM before preparing it')
     token = secrets.token_hex(12)
+    # The running-VM check comes after the dry branch, as in install(): a dry run
+    # writes nothing and must stay printable whatever the lab is doing.
     if dry:
         run(['qemu-img', 'create', '-f', 'qcow2', lab.disk, lab.cfg['LAB_DISK_GB'] + 'G'], dry=True)
         print(f'Render {lab.vm} seed using dedicated keys/id_ed25519.pub; no secrets printed.')
+        print(f'Forget any pinned host key for [127.0.0.1]:{lab.port}; the disk is recreated.')
         if lab.vm == 'ubuntu-26.04':
             for name in ('vmlinuz', 'initrd'):
                 run(['xorriso', '-osirrox', 'on', '-indev', lab.iso, '-extract', '/casper/' + name, lab.work / name], dry=True)
         else:
-            print('Verify signed QGA MSI; stage Windows ISO and use efisys_noprompt.bin (no injected keys).')
+            print('Verify the pinned QGA MSI digest; stage the Windows ISO and use efisys_noprompt.bin (no injected keys).')
         run(['genisoimage', '-quiet', '-J', '-r', '-V', 'cidata' if lab.vm == 'ubuntu-26.04' else 'QPL_SEED',
              '-o', lab.seed, lab.work / 'seed'], dry=True)
         return
+    if lab.pid():
+        raise LabError('Stop the VM before preparing it')
     if lab.blockers():
         raise LabError('; '.join(lab.blockers()))
     if lab.disk.exists() and not (lab.work / 'prepared.json').exists():
@@ -184,6 +172,14 @@ def prepare(lab, dry=False):
         raise LabError('Run ./lab config init before prepare')
     lab.ensure()
     ensure_key(lab)
+    known = lab.safe('keys', 'known_hosts')
+    if known.is_file():
+        # A fresh disk means a new guest identity, so the pinned host key is stale,
+        # not suspicious. Dropping it here, out loud, beats leaving every reinstall to
+        # greet the user with REMOTE HOST IDENTIFICATION HAS CHANGED and teaching them
+        # to wave that banner away.
+        print(f'Forgetting the old host key for [127.0.0.1]:{lab.port}: this disk is new.')
+        run(['ssh-keygen', '-q', '-R', f'[127.0.0.1]:{lab.port}', '-f', str(known)], timeout=30)
     folder = render(lab, token)
     if lab.vm == 'ubuntu-26.04':
         for name in ('vmlinuz', 'initrd'):
@@ -246,6 +242,8 @@ def qemu_command(lab, installing=False):
            '-netdev', f'user,id=net,hostfwd=tcp:127.0.0.1:{lab.port}-:22',
            '-device', 'e1000e,netdev=net' if windows else 'virtio-net-pci,netdev=net',
            '-chardev', f'socket,path={lab.qga},server=on,wait=off,id=agent']
+    if lab.vnc:
+        cmd += ['-vnc', f'127.0.0.1:{lab.vnc - 5900}']
     if windows:
         cmd += ['-device', 'isa-serial,chardev=agent,index=1',
                 '-global', 'driver=cfi.pflash01,property=secure,value=on',
@@ -308,11 +306,10 @@ def start(lab, *, installing=False, dry=False):
     for binary in ['qemu-system-x86_64'] + (['swtpm'] if lab.vm == 'windows-11' else []):
         if not shutil.which(binary):
             raise LabError(f'Missing {binary}; run doctor')
-    with socket.socket() as sock:
-        try:
-            sock.bind(('127.0.0.1', lab.port))
-        except OSError as e:
-            raise LabError(f'SSH port {lab.port} is already in use; no process will be stopped') from e
+    for port, what in [(lab.port, 'SSH')] + ([(lab.vnc, 'VNC')] if lab.vnc else []):
+        if not port_free(port):
+            raise LabError(f'{what} port {port} is already in use by a process this lab does not '
+                           f'own; no process will be stopped. Change LAB_{what}_PORT or free it.')
     lab.ensure()
     for path in (lab.pidfile, lab.qmp, lab.qga):
         lab.safe('work', lab.vm, path.name).unlink(missing_ok=True)
@@ -338,10 +335,38 @@ def start(lab, *, installing=False, dry=False):
             time.sleep(.1)
         if not lab.pid():
             raise LabError('Timeout waiting for owned QEMU process after launch; see qemu.log')
+        if lab.vnc:
+            # Recorded, not hidden: whoever reads the report must know a keyboard
+            # was reachable, exactly as for an explicit --nudge.
+            lab.event(kind='console', outcome='graphical console exposed',
+                      detail=f'vnc://127.0.0.1:{lab.vnc}')
+            print(f'Graphical console: vnc://127.0.0.1:{lab.vnc} (lab view {lab.vm})', flush=True)
     except BaseException:
         if not lab.pid():
             tpm_stop(lab)
         raise
+
+
+def view(lab, dry=False):
+    """Open the guest's graphical console, when the lab was started with one."""
+    if not lab.vnc:
+        raise LabError('No graphical console: set LAB_VNC_PORT (5900-5998) in .env, then start the VM again')
+    url = f'vnc://127.0.0.1:{lab.vnc}'
+    viewer = next((c for c in ('remote-viewer', 'vinagre', 'vncviewer') if shutil.which(c)), None)
+    if dry:
+        print(f'Open {url} with {viewer or "a VNC client"}')
+        return
+    if not lab.pid():
+        raise LabError('No owned VM is running')
+    print(f'Graphical console: {url}')
+    print('WARNING: this console is a real keyboard and mouse. Anything typed here is an '
+          'intervention, and the run can no longer be called unattended.', flush=True)
+    if not viewer:
+        print('No VNC client found; install virt-viewer, then point one at the URL above.')
+        return
+    print('$ ' + shlex.join([viewer, url]), flush=True)
+    subprocess.Popen([viewer, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
 
 
 def tpm_command(lab):
@@ -374,7 +399,7 @@ def install(lab, dry=False, nudge=False):
     try:
         start(lab, installing=True)
         next_shot = 0
-        nudged = False
+        nudged = watched = False
         while True:
             output = tail(lab.serial, 1024 * 1024).splitlines()
             success = success or 'LAB_OK_' + prep['token'] in output
@@ -395,6 +420,12 @@ def install(lab, dry=False, nudge=False):
                 try:
                     shot(lab, caption='Installation progress', dedupe=True, nudge=nudge and not nudged)
                     nudged = nudge
+                    # Exposing a console is not the same as using one. Watch for an
+                    # actual client so the verdict can tell those two apart.
+                    if lab.vnc and not watched and qmp(lab, 'query-vnc').get('clients'):
+                        watched = True
+                        lab.event(kind='console-client', outcome='someone connected to the graphical console')
+                        print('A VNC client connected: this run is no longer provably unattended.', flush=True)
                 except (LabError, OSError) as e:
                     print(f'Screenshot warning: {e}', flush=True)
                 next_shot = time.monotonic() + int(lab.cfg['LAB_SHOT_INTERVAL'])
@@ -496,6 +527,10 @@ def ssh_command(lab, command):
            '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10',
            '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3',
            '-p', str(lab.port), lab.cfg['LAB_USER'] + '@127.0.0.1']
+    if not command:
+        # Interactive session: no remote command, and -t so the guest gets a real tty.
+        # Key-only authentication still applies; no password prompt can appear.
+        return cmd[:1] + ['-t'] + cmd[1:]
     # One argument is an explicit remote command string; multiple arguments are argv.
     if lab.vm == 'windows-11':
         remote = command[0] if len(command) == 1 else subprocess.list2cmdline(command)
@@ -507,8 +542,9 @@ def ssh_command(lab, command):
 
 
 def ssh(lab, command, *, dry=False, timeout=120):
-    if not command:
-        raise LabError('Use lab ssh <vm> -- <command>; password prompts are never enabled')
+    # No command means an interactive shell, and an interactive shell must not be
+    # killed by the one-shot command timeout.
+    interactive = not command
     cmd = ssh_command(lab, command)
     if dry:
         run(cmd, dry=True)
@@ -524,7 +560,7 @@ def ssh(lab, command, *, dry=False, timeout=120):
         raise LabError('Missing dedicated lab SSH key')
     print('$ ' + shlex.join(cmd), flush=True)
     try:
-        return subprocess.run(cmd, timeout=timeout).returncode
+        return subprocess.run(cmd, timeout=None if interactive else timeout).returncode
     except subprocess.TimeoutExpired as e:
         raise LabError(f'Timeout after {timeout}s waiting for guest command: {command}') from e
 
