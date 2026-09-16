@@ -479,8 +479,13 @@ def ssh(lab, command, *, dry=False, timeout=120):
     if dry:
         run(cmd, dry=True)
         return 0
-    if not lab.pid():
+    pid = lab.pid()
+    if not pid:
         raise LabError('SSH refused: no owned VM is running')
+    runtime = Path(f'/proc/{pid}/cmdline').read_bytes().decode().split('\0')
+    expected = f'user,id=net,hostfwd=tcp:127.0.0.1:{lab.port}-:22'
+    if expected not in runtime:
+        raise LabError('SSH port differs from the owned QEMU process. Restore .env or restart this VM before using SSH.')
     if not lab.safe('keys', 'id_ed25519').is_file():
         raise LabError('Missing dedicated lab SSH key')
     print('$ ' + shlex.join(cmd), flush=True)

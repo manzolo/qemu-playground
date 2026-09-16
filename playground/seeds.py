@@ -18,7 +18,7 @@ def ubuntu_seed(cfg, public_key, password_hash, token):
         'storage': {'layout': {'name': 'direct'}},
         'apt': {'geoip': False, 'fallback': 'offline-install'},
         'late-commands': [
-            command('curtin in-target -- sh -c "apt-get update && apt-get install -y qemu-guest-agent" '
+            command('timeout 180 curtin in-target -- sh -c "apt-get update && apt-get install -y qemu-guest-agent" '
                     '|| echo "WARNING: optional guest agent package unavailable" > /dev/ttyS0'),
             command('curtin in-target -- systemctl enable serial-getty@ttyS0.service'),
             command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],
