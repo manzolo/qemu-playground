@@ -203,3 +203,15 @@ See [decisions](docs/DECISIONS.md), [checksum provenance](docs/CHECKSUMS.md) and
 
 MIT — see [LICENSE](LICENSE). Vendor media downloaded or imported at run time keeps
 its own license; see [checksum provenance](docs/CHECKSUMS.md).
+
+## Related
+
+Two siblings live next to this one and share the same habit — a run has to leave evidence:
+
+- **[qlab](https://github.com/manzolo/qlab)** — ready-made QEMU teaching labs as plugins: DNS,
+  firewall, RAID, LDAP, mail, cyber-lab, systems-lab, container-lab. Where this repo watches two
+  machines closely, qlab builds many small ones to learn on.
+- **[qemu-iso-lab](https://github.com/manzolo/qemu-iso-lab)** — unattended recipes that install a
+  real desktop from an ISO and can then be copied onto bare metal.
+
+This is the smallest of the three: two profiles, installed unattended and watched while they do it.
