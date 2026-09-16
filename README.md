@@ -178,3 +178,8 @@ Normal tests use temporary fixtures and do not read your `.env`, keys, media or 
 disks. CI runs those tests, shell checks and dry runs, without QEMU or ISO images.
 See [decisions](docs/DECISIONS.md), [checksum provenance](docs/CHECKSUMS.md) and
 [validation](docs/VALIDATION.md). The original local specification remains in `PROMPT.md`, excluded from Git because it contains machine-specific paths.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Vendor media downloaded or imported at run time keeps
+its own license; see [checksum provenance](docs/CHECKSUMS.md).
