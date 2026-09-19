@@ -207,6 +207,32 @@ hide a broken session; and the failure was only reachable through a real install
 short of one would have put systemd's value in the way. Separately, no `language-pack-*` package
 is installed at all, though 31 LXQt `-l10n` packages are; the desktop is translated regardless.
 
+### Lubuntu 26.04, attempt 5 — the whole profile, from the seed, unwatched
+
+| | |
+|---|---|
+| Installation | `passed (unattended)` in **1,092.46 s** |
+| `ssh-ready`, `desktop-ready` | both passed, 17 s after the installed guest booted |
+| `console` / `console-client` events | none (`LAB_VNC_PORT=0`) |
+| Verdict | `passed (unattended) — attempt 5; previous outcomes retained below` |
+
+Read back over SSH, with nothing applied by hand: `/etc/xdg/lxqt/session.conf` holds
+`[Environment]` and `LANG=it_IT.UTF-8`; the live session holds `LANG=it_IT.UTF-8` rather than
+`C.UTF-8`; `/etc/environment` holds only `PATH`, the abandoned approach being gone; seat0's active
+session is `labuser`; `X11 Layout: it`. The screenshot in `docs/images/` is the frame `up` took
+itself on reaching `desktop-ready`, and the desktop in it is in Italian.
+
+The installation time is 1,092 s against 750 s for attempt 3, on the same host with the same
+media. Archive throughput is the obvious suspect and was not measured, so treat the figure as a
+range rather than a benchmark.
+
+**Observed and not fixed: the desktop blanks, and the passive timeline goes blind with it.**
+Sixteen minutes after the session started, `shot` returned a black framebuffer and the lab did
+what it is built to do — stored the serial log tail instead, captioned as such. Screenshots are
+the lab's main way of watching a guest it refuses to type into, and an idle desktop stops being
+watchable. The same problem was solved for Windows on 2026-09-16 by disabling the guest's
+monitor timeouts in the bootstrap; nothing equivalent exists for this profile.
+
 So: the profile is validated on a real guest end to end — an unattended installation, proven
 unattended, that writes its own desktop configuration, and a graphical session reached
 automatically from a cold boot. What that session gets wrong is its own language.
@@ -301,12 +327,11 @@ failure arrives as evidence.
 - **`LAB_AUTOLOGIN=0` on a real installation.** It is covered by unit tests and was exercised
   against a running guest, but no guest has been installed with it off, and nobody has typed the
   password at the corrected `it` greeter.
-- **An installation that writes `session.conf` from the seed.** The mechanism is proven across a
-  cold boot and the seed is asserted to produce the file byte for byte, but the guest that has it
-  received it by hand; attempt 4 is precisely the reason that distinction is no longer treated as
-  a formality.
 - **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
   and whether that is worth correcting at the source rather than worked around in the session.
+- **LXQt's screen blanking**, which takes the passive timeline with it after about a quarter of
+  an hour idle, and which the Windows profile already guards against.
+- **Why attempt 5 took 1,092 s against attempt 3's 750 s** on the same host and media.
 - **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
   turning the console off entirely, which is not what most runs will do.
 - **`apt.fallback: abort` actually aborting**: no run has yet been made with the archive

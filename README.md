@@ -11,15 +11,16 @@ installed system starts the LXQt graphical login through SDDM. Desktop packages
 and graphical configuration are required; installation fails if they are missing.
 Internet access is required to download the desktop packages.
 
-**Validation status:** on 2026-09-19 the Lubuntu profile was installed three times on a
-real KVM host. The last run, `up --foreground` from a cleaned disk with the graphical
-console switched off so nothing could attach to it, is the one that counts:
-`passed (unattended)` in **750 s**, the installer writing the SDDM drop-in itself, and
-`desktop-ready` recorded 14 s after the installed guest booted into its LXQt session.
-One defect is recorded rather than rounded off — that session comes up in English under
-an Italian locale, because it starts with no `LANG` in its environment. The earlier
-Ubuntu Server and Windows results are kept but do not validate this profile. Read
-[validation](docs/VALIDATION.md) before trusting any of it.
+**Validation status:** on 2026-09-19 the Lubuntu profile was installed five times on a
+real KVM host. The last run is the one that counts: `up --foreground` from a cleaned
+disk with the graphical console switched off so nothing could attach to it,
+`passed (unattended)` in **1,092 s**, every desktop setting written by the installer
+rather than applied afterwards, and `desktop-ready` recorded 17 s after the guest booted
+into an Italian LXQt session by itself. Two attempts before it failed in ways worth
+reading about. One defect is recorded rather than rounded off: the desktop blanks after
+about a quarter of an hour idle, and the passive screenshot timeline goes blind with it.
+The earlier Ubuntu Server and Windows results are kept but do not validate this profile.
+Read [validation](docs/VALIDATION.md) before trusting any of it.
 
 ## What a finished run looks like
 
