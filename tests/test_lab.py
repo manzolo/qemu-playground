@@ -508,6 +508,31 @@ class LabCase(unittest.TestCase):
         with self.assertRaisesRegex(LabError, 'LAB_AUTOLOGIN'):
             Lab(self.root)
 
+    def test_the_session_locale_is_set_in_the_only_layer_that_wins(self):
+        """Three correct system files still lost to systemd's LANG=C.UTF-8."""
+        from playground.desktop import SESSION_CONF, lubuntu_check, session_conf
+        import base64
+        cfg = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_LOCALE='it_IT.UTF-8')
+        steps = [c[-1] for c in json.loads(
+            lubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']['late-commands']]
+        written = next(s for s in steps if SESSION_CONF in s and 'base64 -d' in s)
+        blob = written.split('echo ', 1)[1].split(' |', 1)[0]
+        self.assertEqual(base64.b64decode(blob).decode(), session_conf(cfg))
+        self.assertIn('[Environment]', session_conf(cfg))
+        check = lubuntu_check(cfg, running=True)
+        self.assertIn(f'grep -qx "LANG=it_IT.UTF-8" {SESSION_CONF}', check)
+        # The file being right is not the session having read it, and that gap is
+        # the entire defect, so the running check reads the session's environment.
+        self.assertIn('pgrep -u labuser -x lxqt-session', check)
+        self.assertIn('"/environ', check)
+        # There is no session to read before the guest is up, or when nothing logs in.
+        self.assertNotIn('pgrep', lubuntu_check(cfg))
+        self.assertNotIn('pgrep', lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0'), running=True))
+        # The file is still written either way; only the live check needs a session.
+        self.assertIn(SESSION_CONF, lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0')))
+        # It follows LAB_LOCALE rather than being pinned to one language.
+        self.assertIn('LANG=fr_FR.UTF-8', session_conf(dict(cfg, LAB_LOCALE='fr_FR.UTF-8')))
+
     def test_recover_reads_a_lost_verdict_out_of_an_archived_serial_log(self):
         """QEMU truncates a file: log on every boot, so the token may be archived."""
         self.lab.ensure()

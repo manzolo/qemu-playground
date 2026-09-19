@@ -186,14 +186,26 @@ event landed 0.4 s past the boundary, which is exactly how the second wrong answ
 is already recorded, because the event carries its duration; the window now runs from there.
 Regression test included, and the previous attempts remain visible in the report either way.
 
-**The session's language is a real defect, now diagnosed.** The desktop comes up in English under
-`LAB_LOCALE=it_IT.UTF-8`. The system is configured correctly — `/etc/default/locale` reads
-`LANG=it_IT.UTF-8`, `it_IT.utf8` is generated, and an SSH session gets it — but the graphical
-session does not: `lxqt-session` runs with 34 environment variables, **none** of them `LANG` or
-`LC_*`. `/etc/pam.d/sddm-autologin` does carry `pam_env.so envfile=/etc/default/locale`, so why it
-does not reach the session is not yet established. Separately, no `language-pack-*` package is
-installed at all, though 31 LXQt `-l10n` packages are. Not fixed: guessing at it would be worse
-than naming it.
+**The session's language was a real defect, and the first fix for it was wrong.** The desktop came
+up in English under `LAB_LOCALE=it_IT.UTF-8` while `/etc/default/locale`, `/etc/locale.conf` and
+an SSH session all carried the right value. `/etc/environment` was tried first, on the argument
+that `pam_env` demonstrably delivers that file — the session's `PATH` comes from it — and it
+passed when SDDM was restarted by hand.
+
+Attempt 4 then failed: `passed (unattended)` in 811.12 s, and `up` timed out after 300 s with the
+desktop check red. Walking the check one condition at a time, fourteen passed and the fifteenth
+did not, and the session turned out to hold `LANG=C.UTF-8` rather than nothing — the value
+`systemctl show-environment` reports. systemd's manager environment reaches the session and beats
+`pam_env`, and restarting the display manager leaves that out of the path the variable travels, so
+only a cold boot can see it. The fix now writes `/etc/xdg/lxqt/session.conf`, whose `[Environment]`
+block LXQt applies inside `lxqt-session` itself. Retested by stopping and starting the VM rather
+than the service: the session comes up `it_IT.UTF-8` and the desktop in Italian.
+
+Two things are worth keeping from that: the check that caught it reads `LANG` out of the live
+session's `/proc/<pid>/environ` rather than out of a file, which is why a correct file could not
+hide a broken session; and the failure was only reachable through a real installation — nothing
+short of one would have put systemd's value in the way. Separately, no `language-pack-*` package
+is installed at all, though 31 LXQt `-l10n` packages are; the desktop is translated regardless.
 
 So: the profile is validated on a real guest end to end — an unattended installation, proven
 unattended, that writes its own desktop configuration, and a graphical session reached
@@ -289,9 +301,12 @@ failure arrives as evidence.
 - **`LAB_AUTOLOGIN=0` on a real installation.** It is covered by unit tests and was exercised
   against a running guest, but no guest has been installed with it off, and nobody has typed the
   password at the corrected `it` greeter.
-- **Why the graphical session has no locale**, and therefore whether the fix belongs in the SDDM
-  drop-in, in PAM, or in the LXQt session configuration. The symptom is established; the cause is
-  not.
+- **An installation that writes `session.conf` from the seed.** The mechanism is proven across a
+  cold boot and the seed is asserted to produce the file byte for byte, but the guest that has it
+  received it by hand; attempt 4 is precisely the reason that distinction is no longer treated as
+  a formality.
+- **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
+  and whether that is worth correcting at the source rather than worked around in the session.
 - **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
   turning the console off entirely, which is not what most runs will do.
 - **`apt.fallback: abort` actually aborting**: no run has yet been made with the archive

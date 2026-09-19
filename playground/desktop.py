@@ -9,6 +9,20 @@ installer had an opinion about.
 SDDM_CONF = '/etc/sddm.conf.d/90-lab.conf'
 XSETUP = '/etc/sddm/lab-xsetup'
 SESSION = 'Lubuntu.desktop'
+SESSION_CONF = '/etc/xdg/lxqt/session.conf'
+
+
+def session_conf(cfg):
+    """LXQt sets these in its own process, which is the only layer that wins here.
+
+    The installed desktop came up in English under it_IT.UTF-8 because the session
+    ran with LANG=C.UTF-8 - systemd's manager environment, which is what reaches the
+    session and beats pam_env. /etc/default/locale, /etc/locale.conf and
+    /etc/environment were all correct and all lost, the last of those tried and
+    measured. Restarting SDDM by hand hid the whole thing, because only a cold boot
+    puts systemd's value in the way; the reinstall is what caught it.
+    """
+    return f'[Environment]\nLANG={cfg["LAB_LOCALE"]}\n'
 
 
 def xsetup_script(cfg):
@@ -49,6 +63,7 @@ def lubuntu_check(cfg, *, running=False):
         f'test -x {XSETUP}',
         f'grep -qx "exec setxkbmap -model pc105 -layout {cfg["LAB_KEYBOARD"]}" {XSETUP}',
         f'grep -qx "DisplayCommand={XSETUP}" {SDDM_CONF}',
+        f'grep -qx "LANG={cfg["LAB_LOCALE"]}" {SESSION_CONF}',
     ]
     if cfg['LAB_AUTOLOGIN'] == '1':
         checks.append(f'grep -qx "User={cfg["LAB_USER"]}" {SDDM_CONF}')
@@ -61,4 +76,10 @@ def lubuntu_check(cfg, *, running=False):
             checks.append('test "$(loginctl show-session '
                           '"$(loginctl show-seat seat0 -p ActiveSession --value)" '
                           f'-p Name --value)" = {cfg["LAB_USER"]}')
+            # The file being right is not the session having read it: a correct
+            # locale in three system files still lost to systemd's C.UTF-8, and
+            # only the session's own environment says which one won. environ is
+            # NUL-separated, hence -z.
+            checks.append(f'grep -qz "^LANG={cfg["LAB_LOCALE"]}$" '
+                          f'/proc/"$(pgrep -u {cfg["LAB_USER"]} -x lxqt-session | head -1)"/environ')
     return ' && '.join(checks)

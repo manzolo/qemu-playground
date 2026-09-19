@@ -204,7 +204,10 @@ session, so turn it off if that console is not yours alone. SSH is key-only eith
 and the password is still what `sudo` asks for. SDDM does not read the system's keyboard
 configuration for its own greeter, so the lab writes it a drop-in that applies
 `LAB_KEYBOARD` there too — without it the greeter offers `us` while the installed system
-is Italian, and the password is typed at exactly that screen. The old `LAB_DESKTOP`
+is Italian, and the password is typed at exactly that screen. `LAB_LOCALE` is likewise
+restated in `/etc/xdg/lxqt/session.conf`, which LXQt applies inside the session itself:
+every system-wide locale file loses to systemd's own `LANG=C.UTF-8`, and the desktop
+otherwise comes up in English on an Italian system. The old `LAB_DESKTOP`
 setting is accepted in existing `.env` files but ignored; it cannot disable Lubuntu's
 desktop. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
 `alsa`...) to give the guest a sound card played through the host's daemon; it is
