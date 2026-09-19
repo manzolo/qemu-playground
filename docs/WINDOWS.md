@@ -1,5 +1,7 @@
 # Windows 11 profile
 
+[← Project overview](../README.md) · [Usage](USAGE.md) · [Configuration](CONFIGURATION.md) · [CLI](CLI.md)
+
 This profile requires a Windows license appropriate to your use and installation
 media matching the pinned **Italian x64** vendor checksum. The answer file selects
 `Windows 11 Pro`; it does not activate Windows or bypass licensing/hardware checks.
@@ -46,6 +48,13 @@ though the vendor media uses UDF. The source ISO remains unchanged and pinned. A
 roughly twice the source ISO size in additional staging space. If the no-prompt
 boot image is absent, preparation fails clearly; it does not send keys in secret.
 
+## Using the installed guest
+
+Windows SSH commands run through `cmd.exe`, never `sh -lc`. COM1 carries installer
+diagnostics rather than an interactive shell; use SSH, screenshots or the guest
+agent to inspect the VM. Missing inputs keep the profile visible in the menu, with
+a specific message explaining what blocks preparation.
+
 Useful commands after the installer has completed and QEMU has exited:
 
 ```bash
@@ -68,6 +77,8 @@ signals; PID ownership is checked again and signals use a pidfd to avoid PID reu
 `--force` still walks the whole graceful chain first, so it can take minutes; it
 now says which stage it is waiting on.
 
+## Sources and validation
+
 Sources checked during implementation:
 
 - [Microsoft answer files](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/update-windows-settings-and-scripts-create-your-own-answer-file-sxs?view=windows-11)
@@ -75,6 +86,8 @@ Sources checked during implementation:
 - [Write-VolumeCache](https://learn.microsoft.com/en-us/powershell/module/storage/write-volumecache?view=windowsserver2025-ps)
 - [QEMU Windows guest agent channel](https://github.com/qemu/qemu/blob/master/qga/channel-win32.c)
 
-Full unattended Windows validation is pending access to these licensed media and
-a suitable host. Firmware/QMP tests and XML rendering tests do not validate OOBE,
-Windows Update availability, or successful MSI installation.
+Earlier real Windows installation runs are recorded in [validation](VALIDATION.md).
+The shared bootstrap/readiness checks added on 2026-09-19 have automated coverage,
+but a fresh real-guest installation validating those changes is still pending.
+Firmware/QMP tests and XML rendering tests do not validate OOBE, Windows Update
+availability, or successful MSI installation.
