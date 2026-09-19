@@ -379,6 +379,48 @@ demonstrating itself: before it, ten minutes was enough to turn `shot` into a se
 What is still missing is a run where `up` itself goes green, because the only installation made
 since the check reached 18 conditions is the one the bug failed.
 
+### Both profiles, 2026-09-19 evening — the shared Windows check on a real guest
+
+Run after the Windows readiness rewrite, with `LAB_VNC_PORT=0` so nothing could attach.
+
+| | Lubuntu 26.04 | Windows 11 |
+|---|---|---|
+| Installation | `passed (unattended)` in **790.63 s** | `passed (unattended)` in **2,068.55 s** |
+| `ssh-ready` | passed | passed |
+| Readiness event | `desktop-ready`, 17 s after boot | `agent-ready`, 32 s after boot |
+| Console events | none | none |
+
+`agent-ready` carries `Windows postconditions passed over SSH; synchronized QGA guest-ping
+replied`. That is the first one produced by a real guest rather than a test fixture, and with it
+`up` goes green end to end on both profiles — the gap this document recorded after attempt 6.
+
+**The generated PowerShell parses under Windows PowerShell 5.1.** This was the change's largest
+unknown, since no PowerShell exists on the host. It was settled by reasoning rather than a tool:
+`autounattend.xml` invokes `powershell.exe -NoProfile -ExecutionPolicy Bypass -File setup.ps1`,
+and `-File` parses the whole script before executing any of it. An earlier guest reached
+`Add-WindowsCapability` on line 33, which means the shared check embedded at lines 99-125 had
+already parsed. The token then proved the rest: it is written only after that check, so every one
+of its conditions held on a real Windows guest. `windows_check(running=True)` and a host
+`agent ping` were also run by hand against the booted guest before the clean run, and both passed.
+
+**A `failed` verdict in the middle of this history is the operator's, not the guest's.** While
+watching the first of these Windows runs, the operator sent `SIGINT` to a PID found with
+`pgrep -f "playground.cli"`, whose first match was the `up` process rather than the intended
+screenshot viewer. That recorded `installation | failed` after 1,483 s on a run that was
+installing normally and went on to emit `LAB_OK_8c254e01386550a4552e093e` and power itself off
+21 minutes later. It is an unplanned demonstration of the problem `recover` exists for, with the
+twist that a written verdict is worse than a missing one: `recover` refuses an attempt that
+already has one, so nothing could repair the record. The run was redone from a clean disk, which
+is the row above.
+
+**Running both installations at once costs almost nothing here.** Lubuntu took 790 s alongside a
+Windows installation against 750 s alone, on a 16-core host. That also rules out contention as
+the explanation for the 1,092 s and 1,205 s of attempts 5 and 6, which ran alone; the variance
+lies elsewhere, most plausibly in archive throughput, and is still unexplained.
+
+**Observed and not explained:** every passive frame of both Windows runs shows the guest's Start
+menu open, in a run nothing attached to and nothing typed into.
+
 ## Continuous integration
 
 Every push runs the standard-library suite and the dry runs on Python 3.10 and 3.14,
@@ -416,8 +458,8 @@ failure arrives as evidence.
   password at the corrected `it` greeter.
 - **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
   and whether that is worth correcting at the source rather than worked around in the session.
-- **A green `up` for this profile since the check reached 18 conditions.** Attempt 6's guest
-  passes all of them, but the run that produced it did not: see below.
+- **`LAB_AUTOLOGIN=0` on a real installation**, and typing the password at the corrected `it`
+  greeter.
 - **Why attempt 5 took 1,092 s against attempt 3's 750 s** on the same host and media.
 - **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
   turning the console off entirely, which is not what most runs will do.

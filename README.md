@@ -91,7 +91,7 @@ recovery and safe retries.
 | Profile | Status |
 | --- | --- |
 | **Lubuntu 26.04** | Works end to end. Installs unattended on a real KVM host in roughly 12–20 minutes and boots itself into an LXQt desktop, verified on 2026-09-19. |
-| **Windows 11** | Installs unattended and answers over SSH and the guest agent, verified on 2026-09-16. Its readiness checks were rewritten since and have not yet been confirmed on a real guest, so expect to watch your first run. |
+| **Windows 11** | Works end to end. Installs unattended on a real KVM host in about 35 minutes, then answers over SSH and replies to a guest-agent ping, verified on 2026-09-19. |
 
 Every run writes its own verdict, and a failed one keeps its disk, logs and
 screenshots for you to look at. The [validation record](docs/VALIDATION.md) is the
@@ -100,13 +100,14 @@ establish a successful installation.
 
 ## Behind the scenes
 
-This lab exists because "it worked on my machine" is not evidence, so the record
-keeps what went wrong as carefully as what went right. Reaching the state above took
-six Lubuntu installations: one verdict was lost because the process watching for it
-was killed, a locale fix passed against a restarted display manager and failed on a
-cold boot, and one readiness check called a perfectly good guest broken. The
-[validation record](docs/VALIDATION.md) and the [decision log](docs/DECISIONS.md)
-name each of them, and why the fix is what it is.
+This lab exists because "it worked on my machine" is not evidence, so the record keeps
+what went wrong as carefully as what went right. Reaching the state above took nine
+installations between the two profiles: a verdict was lost because the process watching
+for it was killed, a locale fix passed against a restarted display manager and failed on
+a cold boot, one readiness check called a perfectly good guest broken, and one run was
+marked failed because the operator's `kill` hit the wrong process. The
+[validation record](docs/VALIDATION.md) and the [decision log](docs/DECISIONS.md) name
+each of them, and why the fix is what it is.
 
 ## Find your way
 
