@@ -11,14 +11,15 @@ installed system starts the LXQt graphical login through SDDM. Desktop packages
 and graphical configuration are required; installation fails if they are missing.
 Internet access is required to download the desktop packages.
 
-**Validation status:** on 2026-09-19 the Lubuntu profile was installed twice on a real
-KVM host. The second run, `up --foreground` from a cleaned disk, passed in **781 s** and
-is the one that counts: the installer wrote the SDDM drop-in itself, the guest booted
-into the LXQt session automatically, and `desktop-ready` was recorded 14 s later. One
-caveat is recorded rather than rounded off — a client attached to that run's graphical
-console, so by the lab's own rule the run is not *provably* unattended, though nothing
-typed anything. The earlier Ubuntu Server and Windows results are kept but do not
-validate this profile. Read [validation](docs/VALIDATION.md) before trusting any of it.
+**Validation status:** on 2026-09-19 the Lubuntu profile was installed three times on a
+real KVM host. The last run, `up --foreground` from a cleaned disk with the graphical
+console switched off so nothing could attach to it, is the one that counts:
+`passed (unattended)` in **750 s**, the installer writing the SDDM drop-in itself, and
+`desktop-ready` recorded 14 s after the installed guest booted into its LXQt session.
+One defect is recorded rather than rounded off — that session comes up in English under
+an Italian locale, because it starts with no `LANG` in its environment. The earlier
+Ubuntu Server and Windows results are kept but do not validate this profile. Read
+[validation](docs/VALIDATION.md) before trusting any of it.
 
 ## What a finished run looks like
 

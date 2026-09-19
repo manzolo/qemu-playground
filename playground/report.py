@@ -150,14 +150,27 @@ def report(lab, pdf=False, dry=False, open_after=False):
     frames = records(lab.work / 'screenshots' / 'timeline.jsonl')
     installations = [e for e in history if e.get('kind') == 'installation']
     verdict = installations[-1].get('outcome', 'unknown') if installations else 'Not yet validated / Non ancora validata'
-    assisted = any(e.get('kind') == 'intervention' for e in history)
+    # The verdict describes the last attempt, so only that attempt's events may
+    # qualify it. Reading the whole history let a console opened during one run go
+    # on contradicting every run after it. The previous verdict is the wrong
+    # boundary too: up() boots the installed guest immediately afterwards, and that
+    # boot's own console event lands a fraction of a second on the far side of it.
+    # The attempt's real start is recorded - the event carries how long it took.
+    window = []
+    if installations:
+        last = installations[-1]
+        span = last.get('duration')
+        begin = (last['time'] - span if isinstance(span, (int, float))
+                 else (installations[-2]['time'] if len(installations) > 1 else 0))
+        window = [e for e in history if begin <= e.get('time', 0) <= last['time']]
+    assisted = any(e.get('kind') == 'intervention' for e in window)
     if assisted:
-        verdict += ' — history includes explicit keyboard intervention'
+        verdict += ' — this attempt includes explicit keyboard intervention'
     # Exposed and used are different claims: one is a fact about the setup, the other
     # about what could have reached the guest. Only the second weakens the verdict.
-    if any(e.get('kind') == 'console-client' for e in history):
+    if any(e.get('kind') == 'console-client' for e in window):
         verdict += ' — a client connected to the graphical console, so the run is not provably unattended'
-    elif any(e.get('kind') == 'console' for e in history):
+    elif any(e.get('kind') == 'console' for e in window):
         verdict += ' — a graphical console was exposed; no client connected to it'
     if len(installations) > 1:
         verdict += f' — attempt {len(installations)}; previous outcomes retained below'

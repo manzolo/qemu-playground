@@ -6,7 +6,7 @@ real guest the same day — with a caveat about the host-side record, below.
 
 ## Automated suite
 
-- Standard-library unit/contract suite: **66 tests passed**; configuration and dry-run isolation,
+- Standard-library unit/contract suite: **67 tests passed**; configuration and dry-run isolation,
   vendor hash checking and cache invalidation, XML/JSON seeds, SSH isolation and exit status,
   process identity, selective cleanup and symlink refusal, locks, QMP framing/timeouts,
   token-before-exit handling, failure evidence, passive screenshots, PNG encoding, explicit
@@ -14,7 +14,8 @@ real guest the same day — with a caveat about the host-side record, below.
   a legacy `LAB_DESKTOP` value being ignored rather than honoured) and the guided menu's
   recommendation for each lab state, the SDDM drop-in and greeter keyboard, autologin
   being configurable and checked only when on, and verdict recovery from an archived
-  serial log including the three states where it refuses to guess.
+  serial log including the three states where it refuses to guess, and a verdict being
+  qualified only by its own attempt's console and intervention events.
 - **3 real-tool smoke tests passed**, including Lubuntu preparation from a tiny synthetic ISO
   (kernel extraction, real qcow2 creation, SSH key generation and readable NoCloud seed).
   Real QEMU 10.2.1 TCG smoke tests for **both** VM command lines: firmware starts, process
@@ -158,9 +159,45 @@ the same report.
 been restarted. The system locale and keyboard are correct; only the session's own translation is
 not. Not investigated, and nothing in the lab configures it.
 
-So: the profile is validated on a real guest end to end — an unattended installation that writes
-its own desktop configuration, a graphical session reached automatically from a cold boot, the
-greeter's keyboard, and a recovered verdict for the earlier run whose record was lost.
+### Lubuntu 26.04, attempt 3 — provably unattended
+
+Attempt 2's only blemish was that something had attached to its graphical console, so the run was
+rebuilt once more with `LAB_VNC_PORT=0`, which leaves QEMU with no `-vnc` argument and nothing to
+attach to. Verified against the live process rather than the recorded command line, since the
+recorded one on disk still belonged to the previous run at the time.
+
+| | |
+|---|---|
+| Installation | `passed (unattended)` in **750.42 s** |
+| `ssh-ready`, `desktop-ready` | both passed, 14 s after the installed guest was booted |
+| `console` / `console-client` events | none |
+| Verdict in the report | `passed (unattended) — attempt 3; previous outcomes retained below` |
+
+That is the first run of this profile whose unattendedness is proven rather than merely likely.
+The configuration is otherwise the default one, autologin included.
+
+**It took a report fix to say so.** The first report of attempt 3 still read *"a client connected
+to the graphical console, so the run is not provably unattended"* although attempt 3 never exposed
+one: the verdict was qualified from the whole event history, so a console opened during one run
+went on contradicting every run after it. Scoping it to the previous verdict was not enough
+either — `up` boots the installed guest as soon as it records one, and that boot's own `console`
+event landed 0.4 s past the boundary, which is exactly how the second wrong answer
+(*"a graphical console was exposed; no client connected"*) was produced. The attempt's real start
+is already recorded, because the event carries its duration; the window now runs from there.
+Regression test included, and the previous attempts remain visible in the report either way.
+
+**The session's language is a real defect, now diagnosed.** The desktop comes up in English under
+`LAB_LOCALE=it_IT.UTF-8`. The system is configured correctly — `/etc/default/locale` reads
+`LANG=it_IT.UTF-8`, `it_IT.utf8` is generated, and an SSH session gets it — but the graphical
+session does not: `lxqt-session` runs with 34 environment variables, **none** of them `LANG` or
+`LC_*`. `/etc/pam.d/sddm-autologin` does carry `pam_env.so envfile=/etc/default/locale`, so why it
+does not reach the session is not yet established. Separately, no `language-pack-*` package is
+installed at all, though 31 LXQt `-l10n` packages are. Not fixed: guessing at it would be worse
+than naming it.
+
+So: the profile is validated on a real guest end to end — an unattended installation, proven
+unattended, that writes its own desktop configuration, and a graphical session reached
+automatically from a cold boot. What that session gets wrong is its own language.
 
 ### Ubuntu Server 26.04 (superseded profile) — one attempt, passed
 
@@ -249,13 +286,14 @@ failure arrives as evidence.
 - **The interactive tmux layout**: tmux is not installed on this host, so only the fzf fallback
   has been exercised.
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
-- **An installation nobody watched.** Attempt 2 was complete and unassisted, but a client
-  attached to its graphical console, so by the lab's own rule its unattendedness is unproven. A
-  run with `LAB_VNC_PORT=0`, or simply one nobody opens, would settle it.
 - **`LAB_AUTOLOGIN=0` on a real installation.** It is covered by unit tests and was exercised
   against a running guest, but no guest has been installed with it off, and nobody has typed the
   password at the corrected `it` greeter.
-- **The session's own language**: English labels under an Italian locale, described above.
+- **Why the graphical session has no locale**, and therefore whether the fix belongs in the SDDM
+  drop-in, in PAM, or in the LXQt session configuration. The symptom is established; the cause is
+  not.
+- **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
+  turning the console off entirely, which is not what most runs will do.
 - **`apt.fallback: abort` actually aborting**: no run has yet been made with the archive
   unreachable, so the failure path this profile depends on has been read, not exercised.
 - Behaviour on media other than the pinned Ubuntu bootstrap ISO and the imported Italian x64

@@ -300,16 +300,47 @@ class LabCase(unittest.TestCase):
         with self.assertRaisesRegex(LabError, 'LAB_VNC_PORT'):
             Lab(self.root)
 
+    def history(self, *rows):
+        atomic(self.lab.work / 'events.jsonl', ''.join(json.dumps(r) + '\n' for r in rows))
+
     def test_report_separates_an_exposed_console_from_a_used_one(self):
         self.lab.ensure()
-        self.lab.event(kind='installation', outcome='passed (unattended)')
+        # A console is exposed when the VM starts, so it precedes the verdict the
+        # attempt ends with, and the attempt's span is what the event records.
+        done = {'kind': 'installation', 'time': 1000, 'duration': 100, 'outcome': 'passed (unattended)'}
+        exposed = {'kind': 'console', 'time': 950, 'outcome': 'graphical console exposed'}
+        self.history(done)
         self.assertNotIn('graphical console', report(self.lab).read_text())
-        self.lab.event(kind='console', outcome='graphical console exposed')
-        exposed = report(self.lab).read_text()
-        self.assertIn('no client connected', exposed)
-        self.assertNotIn('not provably unattended', exposed)   # exposed is not used
-        self.lab.event(kind='console-client', outcome='someone connected')
+        self.history(exposed, done)
+        text = report(self.lab).read_text()
+        self.assertIn('no client connected', text)
+        self.assertNotIn('not provably unattended', text)   # exposed is not used
+        self.history(exposed, {'kind': 'console-client', 'time': 960, 'outcome': 'someone connected'}, done)
         self.assertIn('not provably unattended', report(self.lab).read_text())
+
+    def test_one_attempts_console_does_not_qualify_the_next_attempts_verdict(self):
+        """The verdict is about one attempt, so only that attempt may weaken it.
+
+        Reading the whole history made a console opened during one run contradict
+        every run after it, and the previous verdict is the wrong boundary: up()
+        boots the installed guest as soon as it records one, and that boot's own
+        console event lands a fraction of a second on the far side.
+        """
+        self.lab.ensure()
+        self.history(
+            {'kind': 'console', 'time': 100, 'outcome': 'graphical console exposed'},
+            {'kind': 'console-client', 'time': 150, 'outcome': 'someone connected'},
+            {'kind': 'intervention', 'time': 160, 'outcome': 'Enter sent'},
+            {'kind': 'installation', 'time': 200, 'duration': 120, 'outcome': 'passed (assisted)'},
+            {'kind': 'console', 'time': 200.4, 'outcome': 'graphical console exposed'},
+            {'kind': 'installation', 'time': 900, 'duration': 300, 'outcome': 'passed (unattended)'})
+        text = report(self.lab).read_text()
+        self.assertIn('attempt 2', text)
+        self.assertNotIn('not provably unattended', text)
+        self.assertNotIn('no client connected', text)
+        self.assertNotIn('explicit keyboard intervention', text)
+        # The earlier attempt is still in the report; it is just not the verdict.
+        self.assertIn('passed (assisted)', text)
 
     def test_report_can_hand_the_artefact_to_the_desktop(self):
         self.lab.ensure()
