@@ -7,6 +7,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import textwrap
 import time
 from .core import ACTIVE_LAB, Lab, LabError, PROFILES, busy, confirm, lock, run
 from . import operations as ops
@@ -14,6 +15,8 @@ from .interface import menu_command, menu_items, menu_row, status
 from .protocol import agent
 from .report import report
 from .screens import shot
+from .desktop import lubuntu_check
+from .wizard import PAGES, screen, words_for
 
 
 def parser():
@@ -63,10 +66,11 @@ def parser():
     c = command('clean', vm=True)
     c.add_argument('targets', nargs='+', choices=['disk', 'seed', 'screenshots', 'logs', 'keys', 'iso', 'out', 'all'])
     c.add_argument('--yes', action='store_true')
-    for name in ('_menu', '_preview', '_command', '_copy_hint', '_execute', '_keys', '_header'):
+    for name in ('_menu', '_preview', '_command', '_copy_hint', '_execute', '_keys', '_header', '_return_hint'):
         c = command(name, vm=True)
-        if name not in ('_menu', '_keys', '_header', '_copy_hint'):
-            c.add_argument('item', type=int)
+        c.add_argument('--page', choices=PAGES, default='home')
+        if name not in ('_menu', '_keys', '_header', '_copy_hint', '_return_hint'):
+            c.add_argument('item')
     return p
 
 
@@ -149,9 +153,9 @@ def dispatch(lab, args):
         ops.install(lab, dry, args.nudge)
         ops.start(lab, dry=dry)
         if not dry:
-            print('Waiting up to 300s for key-authenticated SSH on the installed guest.', flush=True)
+            print('Waiting up to 300s for key-authenticated SSH and guest readiness.', flush=True)
             deadline = time.monotonic() + 300
-            cmd = ops.ssh_command(lab, ['ver' if lab.vm == 'windows-11' else 'true'])
+            cmd = ops.ssh_command(lab, ['ver' if lab.vm == 'windows-11' else lubuntu_check(running=True)])
             while time.monotonic() < deadline:
                 if not lab.pid():
                     raise LabError('Guest exited while waiting for SSH; inspect qemu.log and last screen')
@@ -162,13 +166,16 @@ def dispatch(lab, args):
                     ready = False
                 if ready:
                     lab.event(kind='ssh-ready', outcome='passed')
+                    if lab.vm == 'lubuntu-26.04':
+                        lab.event(kind='desktop-ready', outcome='passed', detail='Lubuntu LXQt installed; SDDM active; graphical.target')
+                        shot(lab, caption='Installed Lubuntu: graphical login ready')
                     report(lab)
                     break
                 time.sleep(3)
             else:
-                shot(lab, caption='Timeout waiting for key-authenticated SSH')
+                shot(lab, caption='Timeout waiting for SSH and guest readiness')
                 report(lab)
-                raise LabError('Timeout after 300s waiting for key-authenticated SSH; VM retained')
+                raise LabError('Timeout after 300s waiting for SSH and guest readiness; VM retained')
     return 0
 
 
@@ -184,19 +191,37 @@ def main(argv=None):
     args.dry_run = dry
     try:
         lab = Lab(args.root, getattr(args, 'vm', PROFILES[0]))
-        if args.action in ('_keys', '_header', '_copy_hint'):
-            from .interface import header, words
-            print(header(lab) if args.action == '_header' else words(lab)[args.action[1:]])
+        if args.action in ('_keys', '_header', '_copy_hint', '_return_hint'):
+            from .interface import words
+            if args.action == '_header':
+                try:
+                    width = max(20, os.get_terminal_size(0).columns - 2)
+                except OSError:
+                    width = 78
+                print('\n'.join(textwrap.fill(line, width=width)
+                                for line in screen(lab, args.page)[0].splitlines()))
+            elif args.action == '_return_hint':
+                print(words_for(lab)['return_hint'])
+            else:
+                print(words(lab)[args.action[1:]])
             return 0
         if args.action in ('_menu', '_preview', '_command', '_execute'):
-            items = menu_items(lab)
             if args.action == '_menu':
-                for item in items:
+                for item in screen(lab, args.page)[1]:
                     print(f'{item["id"]}\t{menu_row(item)}')
                 return 0
-            if not 0 <= args.item < len(items):
+            if not args.item.isdecimal():
+                item = next((i for i in screen(lab, args.page)[1] if i['id'] == args.item), None)
+                if item is None or args.action == '_execute':
+                    raise LabError('Unknown menu action')
+                if args.action == '_preview':
+                    print(item['label'])
+                return 0
+            items = menu_items(lab)
+            index = int(args.item)
+            if not 0 <= index < len(items):
                 raise LabError('Unknown menu item')
-            item = items[args.item]
+            item = items[index]
             if args.action == '_command':
                 print(menu_command(lab, item))
                 return 0

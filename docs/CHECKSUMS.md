@@ -6,10 +6,10 @@ because a local file hashes differently.
 
 | Profile | Vendor artifact / table entry | SHA-256 source |
 | --- | --- | --- |
-| ubuntu-26.04 | `ubuntu-26.04-live-server-amd64.iso` (26.04 GA, not 26.04.1) | https://releases.ubuntu.com/26.04/SHA256SUMS |
+| lubuntu-26.04 | `ubuntu-26.04-live-server-amd64.iso` (26.04 GA bootstrap medium; installs required `lubuntu-desktop` packages) | https://releases.ubuntu.com/26.04/SHA256SUMS |
 | windows-11 | Microsoft Windows 11 download page, `Italian 64-bit` — 25H2 media, distributed filename `Win11_25H2_Italian_x64_v2.iso`, ISO volume id `CCCOMA_X64FRE_IT-IT_DV9`, 7986 MiB | https://www.microsoft.com/en-us/software-download/windows11 |
 
-Ubuntu SHA-256:
+Lubuntu's Ubuntu bootstrap medium SHA-256:
 
 ```text
 dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9

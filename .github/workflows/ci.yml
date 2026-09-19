@@ -16,7 +16,7 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: bash -n lab scripts/menu.sh
       - run: shellcheck lab scripts/menu.sh
-      - run: ./lab up ubuntu-26.04 --dry-run
+      - run: ./lab up lubuntu-26.04 --dry-run
       - run: ./lab install windows-11 --dry-run
 
   emulated:

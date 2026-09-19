@@ -12,8 +12,8 @@ if [[ ! -t 0 || ! -t 1 ]]; then
 fi
 # Python validates managed paths before Bash opens any local logs.
 "$ROOT/lab" status >/dev/null
-mkdir -p "$ROOT/work/ubuntu-26.04" "$ROOT/work/windows-11"
-touch "$ROOT/work/ubuntu-26.04/steps.log" "$ROOT/work/windows-11/steps.log"
+mkdir -p "$ROOT/work/lubuntu-26.04" "$ROOT/work/windows-11"
+touch "$ROOT/work/lubuntu-26.04/steps.log" "$ROOT/work/windows-11/steps.log"
 if command -v tmux >/dev/null && [[ -z ${TMUX:-} && -z ${LAB_NO_TMUX:-} ]]; then
     printf -v launch 'bash %q' "$ROOT/scripts/menu.sh"
     exec tmux new-session -s "qemu-playground-$$" "$launch"
@@ -24,22 +24,24 @@ cleanup() {
 }
 trap cleanup EXIT
 trap ':' INT
-profile=ubuntu-26.04
+profile=lubuntu-26.04
+page=home
 while true; do
     export LAB_MENU_PROFILE="$profile"
+    export LAB_MENU_PAGE="$page"
     # shellcheck disable=SC2016
-    preview='"$ROOT/lab" _preview "$LAB_MENU_PROFILE" {1}'
+    preview='"$ROOT/lab" _preview "$LAB_MENU_PROFILE" --page "$LAB_MENU_PAGE" {1}'
     selection=''
     # Full-width preview, with no side borders to get mixed into copied commands.
     # Leave mouse selection to the terminal; Ctrl-Y offers native soft wrapping too.
-    selection="$("$ROOT/lab" _menu "$profile" | fzf --ansi --delimiter=$'\t' --with-nth=2.. \
+    selection="$("$ROOT/lab" _menu "$profile" --page "$page" | fzf --ansi --delimiter=$'\t' --with-nth=2.. \
         --prompt=' / ' --layout=reverse --height=100% --border=none --info=hidden \
         --no-mouse --no-hscroll --no-sort --cycle --pointer='›' \
         --color='fg:-1,bg:-1,fg+:15,bg+:24,hl:110,hl+:159,header:109,prompt:110,pointer:117,border:238' \
-        --header="$("$ROOT/lab" _header "$profile")" --header-first \
+        --header="$("$ROOT/lab" _header "$profile" --page "$page")" --header-first \
         --bind='tab:toggle-preview' \
         --expect=ctrl-p,ctrl-r,f5,ctrl-y,ctrl-l,ctrl-q,esc \
-        --preview="$preview" --preview-window='down:6:wrap:border-top')" || {
+        --preview="$preview" --preview-window='down:6:wrap:border-top:hidden')" || {
         code=$?
         # Listing esc under --expect is what separates it from Ctrl-C: fzf reports both
         # as 130 otherwise, which is why this used to need an extra chooser. Now Esc
@@ -52,12 +54,19 @@ while true; do
         break
     }
     key="${selection%%$'\n'*}"
-    # This is the top level: there is nothing to go back to, so Esc leaves.
-    if [[ $key == esc || $key == ctrl-q ]]; then
+    if [[ $key == ctrl-q ]]; then
         break
     fi
+    if [[ $key == esc ]]; then
+        case "$page" in
+            home) break ;;
+            setup|media|machine|cleanup) page=tools ;;
+            *) page=home ;;
+        esac
+        continue
+    fi
     if [[ $key == ctrl-p ]]; then
-        if [[ $profile == ubuntu-26.04 ]]; then profile=windows-11; else profile=ubuntu-26.04; fi
+        page=profiles
         continue
     fi
     [[ $key == ctrl-r || $key == f5 ]] && continue
@@ -67,7 +76,7 @@ while true; do
                 tmux kill-pane -t "$pane" 2>/dev/null || true
                 pane=''
             else
-                printf -v follow 'tail -n 12 -F %q %q' "$ROOT/work/ubuntu-26.04/steps.log" "$ROOT/work/windows-11/steps.log"
+                printf -v follow 'tail -n 12 -F %q %q' "$ROOT/work/lubuntu-26.04/steps.log" "$ROOT/work/windows-11/steps.log"
                 pane="$(tmux split-window -d -v -l 8 -P -F '#{pane_id}' "$follow")" || pane=''
             fi
         else
@@ -79,6 +88,18 @@ while true; do
     fi
     row="${selection#*$'\n'}"
     item="${row%%$'\t'*}"
+    # Navigation never reaches the action dispatcher or changes lab files.
+    if [[ $item == nav:* ]]; then
+        [[ $key == ctrl-y ]] || page="${item#nav:}"
+        continue
+    fi
+    if [[ $item == profile:* ]]; then
+        if [[ $key != ctrl-y ]]; then
+            profile="${item#profile:}"
+            page=home
+        fi
+        continue
+    fi
     [[ $item =~ ^[0-9]+$ ]] || continue
     if [[ $key == ctrl-y ]]; then
         clear
@@ -104,7 +125,8 @@ while true; do
         break
     fi
     # Any single key, so Esc gets someone back to the menu just as Enter does.
-    printf '\nPress any key to return to the menu. '
+    printf '\n'
+    "$ROOT/lab" _return_hint "$profile"
     read -rsn1 _ || true
     printf '\n'
  done

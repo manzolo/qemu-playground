@@ -1,29 +1,37 @@
 # qemu-playground
 
-A small, observable QEMU/KVM lab with two profiles: **Ubuntu Server 26.04** and
+A small, observable QEMU/KVM lab with two profiles: **Lubuntu 26.04 (LXQt)** and
 **Windows 11**. A Bash/fzf menu teaches the same CLI you can run yourself.
 No libvirt, system services, personal SSH configuration, or root privileges are
 needed for normal operation.
 
-**Validation status:** on 2026-09-16 both profiles were installed unattended on a
-real KVM host and then reached over SSH — Ubuntu 26.04 on the first attempt in
-371 s, Windows 11 on the fourth in 2,021 s, with the three earlier failures kept
-and reported. The successful Windows run carries no `intervention` event: it was
-not assisted. The automated suite (31 tests) covers configuration, seed rendering,
-process ownership, checksum invalidation, cleanup, completion/failure handling,
-QMP framing and screenshots. What is still unproven — graceful Windows shutdown
-timing, recovery from a genuinely stalled installer, the tmux layout — is listed
-attempt by attempt in [validation](docs/VALIDATION.md).
+The Lubuntu profile installs the complete `lubuntu-desktop` package automatically,
+using the pinned Ubuntu Server ISO only as the Subiquity bootstrap medium. The
+installed system starts the LXQt graphical login through SDDM. Desktop packages
+and graphical configuration are required; installation fails if they are missing.
+Internet access is required to download the desktop packages.
+
+**Validation status:** on 2026-09-19 the Lubuntu profile installed unattended on a
+real KVM host in about 800 s, with the in-target desktop check passing before the
+completion token and a disk 1.85x the size of the Server profile it replaces. That
+run's host-side record was lost when its background worker was killed, so no report
+exists for it and the installed guest has not yet been booted. The earlier Ubuntu
+Server and Windows results are kept but do not validate this profile. Read
+[validation](docs/VALIDATION.md) before trusting any of it.
 
 ## What a finished run looks like
 
 Both images are `work/PROFILE/screenshots/` frames from the run described in
 [validation](docs/VALIDATION.md); nothing is staged.
 
-![Ubuntu 26.04 installed, at the console login prompt](docs/images/ubuntu-26.04-installed.png)
+![Ubuntu Server 26.04 installed, at the console login prompt](docs/images/ubuntu-26.04-installed.png)
 
-*Ubuntu 26.04 after the unattended installation: the server console at its login prompt. The lab
-does not log in there — it connects over SSH with a dedicated key.*
+*The predecessor `ubuntu-26.04` profile after its unattended installation: the server console at
+its text login prompt. It is kept as the honest picture of what that profile produced, and as the
+reason the Lubuntu profile exists. No LXQt frame is shown yet: the Lubuntu profile has installed
+on a real guest, but that run ended at poweroff and the installed system has not been booted —
+see [validation](docs/VALIDATION.md). The lab never logs in at the console; it connects over SSH
+with a dedicated key.*
 
 ![Windows 11 desktop during the successful attempt](docs/images/windows-11-installed.png)
 
@@ -47,16 +55,27 @@ guest ever accepts it over SSH, which is key-only.
 ./lab                        # interactive menu
 ```
 
-The menu's first entry is always the prerequisite checker. Actions have a quiet
-category column; unavailable actions stay visible in muted text, with the reason
-below the list. The full-width bottom preview shows a shell-ready command without
-a `$` prompt. `Ctrl-Y` opens that command as plain terminal text: select it and
+The menu opens a guided path: **environment → ISO → preparation → installation →
+use the VM**. It shows the current step, a short explanation and one recommended
+action based on the selected profile's files and running operations. Completed
+steps are skipped; refresh after a background operation to discover the next
+step. An unvalidated installation attempt points to reports and logs, preserving
+the disk for inspection.
+
+The home screen also offers VM access, reports, profile selection, and settings
+and maintenance. The latter contains small submenus for configuration, media,
+machine operations and cleanup. Unavailable actions remain muted in those
+submenus; `Tab` reveals their reason and the exact CLI command.
+The full-width bottom preview is hidden initially to keep the wizard compact.
+It shows a shell-ready command without a `$` prompt.
+`Ctrl-Y` opens that command as plain terminal text: select it and
 copy using your terminal's copy shortcut, including when long lines wrap. The
 command uses an absolute path, so it also works from another shell's directory.
-`Tab` toggles the preview. `Ctrl-P` switches profiles; `Ctrl-R` or `F5` refreshes.
-`Ctrl-C` comes back to the menu; `Esc` leaves it, and so does the last entry, so
-quitting never depends on knowing a key. After a command runs, any key returns to
-the list.
+`Tab` toggles the preview. `Ctrl-P` opens the profile chooser;
+`Ctrl-R` or `F5` refreshes. `Esc` goes back one screen and exits from home;
+`Ctrl-Q` exits from any screen. Each submenu also has a Back entry, and home has
+an Exit entry. `Ctrl-C` returns to the current screen. After a command runs, any
+key returns to the wizard, which recalculates the next step.
 The menu is English by default; `LAB_LANG=it` in `.env` translates its labels,
 categories and blocker reasons. Nothing else changes: commands, logs, events and
 the HTML report stay English, and the report keeps its Italian quick guide.
@@ -70,35 +89,37 @@ The CLI `install` and `up` also detach by default. Use `--foreground` in automat
 when you need the final exit code. A background command returning zero means its
 worker was launched, **not** that the installation succeeded.
 
-## Ubuntu, one step at a time
+## Lubuntu, one step at a time
 
 ```bash
-./lab iso ubuntu-26.04 download      # curl resume + pinned SHA-256 verification
-./lab iso ubuntu-26.04 verify
-./lab prepare ubuntu-26.04
-./lab install ubuntu-26.04          # background, timeline recorded automatically
+./lab iso lubuntu-26.04 download      # curl resume + pinned SHA-256 verification
+./lab iso lubuntu-26.04 verify
+./lab prepare lubuntu-26.04
+./lab install lubuntu-26.04          # background, timeline recorded automatically
 ./lab status
 # Wait for a passed installation and spontaneous QEMU exit, then:
-./lab start ubuntu-26.04
-./lab ssh ubuntu-26.04 -- 'uname -a'
-./lab shot ubuntu-26.04             # capture via QMP, convert to PNG, xdg-open
-./lab console ubuntu-26.04          # read-only serial log, bounded follow
-./lab report ubuntu-26.04
-./lab stop ubuntu-26.04
+./lab start lubuntu-26.04
+./lab ssh lubuntu-26.04 -- 'uname -a'
+./lab shot lubuntu-26.04             # capture via QMP, convert to PNG, xdg-open
+./lab console lubuntu-26.04          # read-only serial log, bounded follow
+./lab report lubuntu-26.04
+./lab stop lubuntu-26.04
 ```
 
 Or run the same steps as one operation:
 
 ```bash
-./lab up ubuntu-26.04 --dry-run     # no writes, downloads or processes
-./lab up ubuntu-26.04 --foreground  # includes boot and key-authenticated SSH check
+./lab up lubuntu-26.04 --dry-run     # no writes, downloads or processes
+./lab up lubuntu-26.04 --foreground  # includes boot and key-authenticated SSH check
 ```
 
-Ubuntu boots the ISO's extracted kernel/initrd directly with `autoinstall` and
-NoCloud seed media. No menu keys are injected. Network access is needed for the
-SSH package if it is not available on the installation media; the optional QEMU
-agent is best effort. The completion marker follows `sync` and a block-device
-flush. The host then waits for QEMU to exit on its own. Failure and timeout keep
+Lubuntu boots the bootstrap ISO's extracted kernel/initrd directly with
+`autoinstall` and NoCloud seed media. No menu keys are injected. The installer
+installs `lubuntu-desktop`, SSH and the QEMU guest agent, enables SDDM and sets
+`graphical.target`. It verifies the desktop packages and session before emitting
+the completion marker, after `sync` and a block-device flush. The host then
+waits for QEMU to exit on its own. `up` also boots the installed system and checks
+that SDDM is active over key-authenticated SSH. Failure and timeout keep
 the VM and disk available, take a final screenshot where possible, and generate
 an HTML report.
 
@@ -148,7 +169,7 @@ receives `sh -lc`. COM1 carries installer diagnostics, not an interactive shell.
 | `clean VM TARGET... [--dry-run] [--yes]` | Enumerate and remove only selected paths |
 
 Every command accepts `--dry-run`. Place SSH's host options **before** the VM name,
-for example `./lab ssh --dry-run ubuntu-26.04 -- 'uname -a'`; everything after
+for example `./lab ssh --dry-run lubuntu-26.04 -- 'uname -a'`; everything after
 `--` belongs to the guest. `--background` is also available for downloads and
 preparation. SSH remains foreground to preserve its exit status.
 
@@ -163,17 +184,17 @@ whether anyone is actually attached, and only when a client connects does the
 verdict say the run is no longer provably unattended. Passive screenshots remain
 the default way to watch: they cannot type.
 
-The pinned Ubuntu media is Ubuntu **Server**, so the graphical console shows a text
-login. `LAB_DESKTOP=1` adds `ubuntu-desktop-minimal` after the base install, best
-effort like the guest agent: it needs the network and must never fail an otherwise
-good installation. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
+The installed Lubuntu guest always includes LXQt and a graphical login. Sign in
+using the user and console password from `.env`; SSH remains key-only. The old
+`LAB_DESKTOP` setting is accepted in existing `.env` files but ignored; it cannot
+disable Lubuntu's desktop. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
 `alsa`...) to give the guest a sound card played through the host's daemon; it is
 `none` by default, because a headless host has no daemon and naming a backend that
 is not there stops QEMU from starting.
 
 The lab reads `.env` as data; it never executes shell substitutions or sources it.
 Environment variables do not silently override configuration. `.env.example`
-lists all settings. Ubuntu uses port 2400 and Windows 2401 by default, bound only
+lists all settings. Lubuntu uses port 2400 and Windows 2401 by default, bound only
 to localhost. Adjust `LAB_SSH_PORT` to move both. KVM is the default;
 `LAB_ACCEL=tcg` is available for slow emulation and firmware diagnostics.
 
@@ -207,12 +228,12 @@ PDF dependencies (`markdown`, `weasyprint`, plus WeasyPrint's native libraries) 
 loaded only on request. Missing dependencies leave HTML available.
 
 ```bash
-./lab clean ubuntu-26.04 disk seed --dry-run
-./lab clean ubuntu-26.04 disk seed       # lists paths, asks once, keeps logs/screens
-./lab clean ubuntu-26.04 screenshots logs
-./lab clean ubuntu-26.04 all             # excludes ISO AND shared SSH keys
-./lab clean ubuntu-26.04 iso             # separate, explicit expensive-media choice
-./lab clean ubuntu-26.04 keys            # shared by both guests; use deliberately
+./lab clean lubuntu-26.04 disk seed --dry-run
+./lab clean lubuntu-26.04 disk seed       # lists paths, asks once, keeps logs/screens
+./lab clean lubuntu-26.04 screenshots logs
+./lab clean lubuntu-26.04 all             # excludes ISO AND shared SSH keys
+./lab clean lubuntu-26.04 iso             # separate, explicit expensive-media choice
+./lab clean lubuntu-26.04 keys            # shared by both guests; use deliberately
 ```
 
 An attempted installation disk is never reused automatically. Stop the VM and

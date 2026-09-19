@@ -1,5 +1,5 @@
-# A whole Ubuntu installation with no KVM at all. Deliberately not on push: the same
-# install takes 370 s under KVM here and emulation is slower by a large factor, so it
+# A whole Lubuntu desktop installation with no KVM. Deliberately not on push:
+# desktop package downloads and emulation can take a long time, so it
 # runs when a tag says the repo is claiming to be good, plus a manual button for the
 # times you want the proof without cutting a release.
 name: emulated installation (tags)
@@ -11,7 +11,7 @@ permissions:
   contents: read
 jobs:
   install:
-    name: Ubuntu 26.04 installed under TCG
+    name: Lubuntu 26.04 installed under TCG
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -37,25 +37,21 @@ jobs:
           chmod 600 .env
           ./lab config show
       - name: Download and verify the pinned ISO
-        run: ./lab iso ubuntu-26.04 download
-      - name: Prepare disk, key and seed
-        run: ./lab prepare ubuntu-26.04
-      - name: Install, unattended and emulated
-        run: ./lab install ubuntu-26.04 --foreground
-      - name: Prove the installed guest answers on its own key
+        run: ./lab iso lubuntu-26.04 download
+      - name: Install unattended and verify the graphical desktop over SSH
+        run: ./lab up lubuntu-26.04 --foreground
+      - name: Show the installed version and stop
         run: |
-          ./lab start ubuntu-26.04
-          for _ in $(seq 1 60); do ./lab ssh ubuntu-26.04 -- 'true' && break; sleep 10; done
-          ./lab ssh ubuntu-26.04 -- 'uname -a'
-          ./lab stop ubuntu-26.04
+          ./lab ssh lubuntu-26.04 -- 'uname -a'
+          ./lab stop lubuntu-26.04
       - name: Evidence, whatever the outcome
         if: always()
-        run: ./lab report ubuntu-26.04 || true
+        run: ./lab report lubuntu-26.04 || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: emulated-install-evidence
           path: |
             out/
-            work/ubuntu-26.04/serial.log
-            work/ubuntu-26.04/events.jsonl
+            work/lubuntu-26.04/serial.log
+            work/lubuntu-26.04/events.jsonl

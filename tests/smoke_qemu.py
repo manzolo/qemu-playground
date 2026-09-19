@@ -66,7 +66,7 @@ class RealQemu(unittest.TestCase):
                 tpm_stop(lab)
 
     @unittest.skipUnless(all(shutil.which(c) for c in ('xorriso', 'genisoimage', 'openssl', 'ssh-keygen')), 'seed tools required')
-    def test_real_ubuntu_preparation_with_synthetic_iso(self):
+    def test_real_lubuntu_preparation_with_synthetic_iso(self):
         with tempfile.TemporaryDirectory(prefix='qpl-seed-') as name:
             root = Path(name)
             shutil.copytree(SOURCE / 'profiles', root / 'profiles')
@@ -96,11 +96,12 @@ class RealQemu(unittest.TestCase):
             run(['xorriso', '-osirrox', 'on', '-indev', lab.seed, '-extract', '/user-data', data], capture=True)
             seed = json.loads(data.read_text().split('\n', 1)[1])['autoinstall']
             self.assertFalse(seed['ssh']['allow-pw'])
+            self.assertIn('lubuntu-desktop', seed['packages'])
             self.assertEqual(seed['ssh']['authorized-keys'][0], (root / 'keys/id_ed25519.pub').read_text().strip())
             self.assertEqual((root / 'keys/id_ed25519').stat().st_mode & 0o777, 0o600)
 
     def test_linux_firmware_qmp_concurrency_and_screenshot(self):
-        self.smoke('ubuntu-26.04')
+        self.smoke('lubuntu-26.04')
 
     @unittest.skipUnless(shutil.which('swtpm') and Path('/usr/share/OVMF/OVMF_VARS_4M.ms.fd').exists(), 'swtpm + OVMF required')
     def test_windows_firmware_tpm_qmp_and_screenshot(self):

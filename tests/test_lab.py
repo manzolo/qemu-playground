@@ -23,7 +23,7 @@ from playground.operations import clean, install, prepare, qemu_command, ssh, ss
 from playground.protocol import JsonSocket, agent, qmp
 from playground.report import report
 from playground.screens import png, ppm, shot
-from playground.seeds import ubuntu_seed, windows_seed
+from playground.seeds import lubuntu_seed, windows_seed
 
 SOURCE = Path(__file__).resolve().parents[1]
 
@@ -117,7 +117,7 @@ class LabCase(unittest.TestCase):
 
     def test_seed_schema_and_flush_before_token(self):
         cfg = dict(DEFAULTS, LAB_PASSWORD='fixture<&"password')
-        text = ubuntu_seed(cfg, 'ssh-ed25519 TEST_ONLY', '$6$TEST_ONLY', 'fixture-token')
+        text = lubuntu_seed(cfg, 'ssh-ed25519 TEST_ONLY', '$6$TEST_ONLY', 'fixture-token')
         data = json.loads(text.split('\n', 1)[1])['autoinstall']
         self.assertFalse(data['ssh']['allow-pw'])
         self.assertEqual(data['shutdown'], 'poweroff')
@@ -160,7 +160,7 @@ class LabCase(unittest.TestCase):
 
     def test_linux_stop_never_uses_ssh_to_power_off(self):
         # ACPI powers Linux off in seconds and the lab user has no passwordless sudo.
-        self._stop_with_unresponsive_guest('ubuntu-26.04').assert_not_called()
+        self._stop_with_unresponsive_guest('lubuntu-26.04').assert_not_called()
 
     def test_specialize_runs_nothing_and_oobe_declares_locales(self):
         """A non-zero specialize command stops Setup on a modal dialog forever."""
@@ -203,7 +203,7 @@ class LabCase(unittest.TestCase):
         self.assertIn("$expected = ''", blank)
 
     def test_ssh_isolated_and_windows_has_no_posix_shell(self):
-        for vm in ('ubuntu-26.04', 'windows-11'):
+        for vm in ('lubuntu-26.04', 'windows-11'):
             lab = Lab(self.root, vm)
             args = ssh_command(lab, ['echo', 'a b'])
             self.assertIn('BatchMode=yes', args)
@@ -277,8 +277,8 @@ class LabCase(unittest.TestCase):
 
     def test_dry_runs_stay_printable_while_a_vm_is_running(self):
         with patch.object(Lab, 'pid', return_value=4242):
-            self.assertEqual(self.invoke('iso', 'ubuntu-26.04', 'verify', '--dry-run')[0], 0)
-            self.assertEqual(self.invoke('up', 'ubuntu-26.04', '--dry-run')[0], 0)
+            self.assertEqual(self.invoke('iso', 'lubuntu-26.04', 'verify', '--dry-run')[0], 0)
+            self.assertEqual(self.invoke('up', 'lubuntu-26.04', '--dry-run')[0], 0)
             for action in ('prepare', 'install'):
                 code, output = self.invoke(action, 'windows-11', '--dry-run')
                 self.assertEqual(code, 0, output)
@@ -382,22 +382,49 @@ class LabCase(unittest.TestCase):
         with self.assertRaisesRegex(LabError, 'LAB_AUDIO'):
             Lab(self.root)
 
-    def test_desktop_flag_is_best_effort_and_keeps_the_token_last(self):
-        for flag, expected in (('0', False), ('1', True)):
-            cfg = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_DESKTOP=flag)
-            data = json.loads(ubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']
+    def test_lubuntu_desktop_is_required_even_with_legacy_config(self):
+        for flag in ('0', '1'):
+            atomic(self.root / '.env', f'LAB_PASSWORD=fixture\nLAB_DESKTOP={flag}\n')
+            cfg = Lab(self.root).cfg
+            self.assertNotIn('LAB_DESKTOP', cfg)
+            data = json.loads(lubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']
             steps = [c[-1] for c in data['late-commands']]
-            self.assertEqual(any('ubuntu-desktop-minimal' in s for s in steps), expected)
-            # A desktop needs the network, so it must never fail a good install, and
-            # the completion token has to stay the last thing that runs.
-            if expected:
-                desktop = next(s for s in steps if 'ubuntu-desktop-minimal' in s)
-                self.assertIn('timeout ', desktop)
-                self.assertIn('|| echo "WARNING', desktop)
+            self.assertIn('lubuntu-desktop', data['packages'])
+            self.assertIn('qemu-guest-agent', data['packages'])
+            self.assertEqual(data['apt']['fallback'], 'abort')
+            self.assertTrue(any('enable sddm.service' in s for s in steps))
+            self.assertTrue(any('set-default graphical.target' in s for s in steps))
+            check = next(s for s in steps if 'dpkg-query' in s)
+            self.assertIn('lxqt-session', check)
+            self.assertNotIn('||', check)
             self.assertIn('LAB_OK_tok', steps[-1])
-        atomic(self.root / '.env', 'LAB_DESKTOP=2\n')
-        with self.assertRaisesRegex(LabError, 'LAB_DESKTOP'):
-            Lab(self.root)
+
+    def test_up_waits_for_a_running_lubuntu_desktop_before_recording_success(self):
+        from argparse import Namespace
+        from playground.cli import dispatch
+        from playground.core import ACTIVE_LAB
+        from playground.desktop import lubuntu_check
+        from subprocess import CompletedProcess
+        self.lab.ensure()
+        context = ACTIVE_LAB.set(None)
+        self.addCleanup(ACTIVE_LAB.reset, context)
+        with contextlib.ExitStack() as stack:
+            for name in ('config', 'iso', 'prepare', 'install', 'start'):
+                stack.enter_context(patch('playground.cli.ops.' + name))
+            stack.enter_context(patch('playground.cli.ops.doctor', return_value=0))
+            stack.enter_context(patch.object(Lab, 'pid', return_value=123))
+            stack.enter_context(patch('playground.cli.report'))
+            capture = stack.enter_context(patch('playground.cli.shot'))
+            sleep = stack.enter_context(patch('playground.cli.time.sleep'))
+            proc = stack.enter_context(patch('playground.cli.subprocess.run', side_effect=[
+                CompletedProcess([], 1), CompletedProcess([], 0)]))
+            dispatch(self.lab, Namespace(action='up', dry_run=False, nudge=False))
+        self.assertEqual(proc.call_count, 2)
+        sleep.assert_called_once_with(3)
+        self.assertIn(lubuntu_check(running=True), shlex.split(proc.call_args.args[0][-1]))
+        events = records(self.lab.work / 'events.jsonl')
+        self.assertEqual([e['kind'] for e in events], ['ssh-ready', 'desktop-ready'])
+        capture.assert_called_once()
 
     def test_menu_ends_with_a_way_out(self):
         items = menu_items(self.lab)
@@ -631,7 +658,7 @@ class LabCase(unittest.TestCase):
         capture.assert_called_once()
         self.assertIn('TIMEOUT', capture.call_args.kwargs['caption'])
         self.assertTrue(self.lab.disk.exists())
-        self.assertTrue((self.root / 'out/ubuntu-26.04.html').exists())
+        self.assertTrue((self.root / 'out/lubuntu-26.04.html').exists())
 
     def _prepared_install(self):
         from playground.operations import configuration_digest
@@ -664,7 +691,7 @@ class LabCase(unittest.TestCase):
                 install(self.lab)
         capture.assert_called_once()
         self.assertTrue(self.lab.disk.exists())
-        self.assertTrue((self.root / 'out/ubuntu-26.04.html').exists())
+        self.assertTrue((self.root / 'out/lubuntu-26.04.html').exists())
 
 
 class SocketTests(unittest.TestCase):

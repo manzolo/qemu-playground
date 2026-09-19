@@ -110,8 +110,10 @@ def translate(lab, reason):
 def header(lab):
     """Compact VM context and shortcuts, without long paths or console URLs."""
     t = words(lab)
+    iso = lab.iso_state()
     state = [lab.vm, t['h_on'] if lab.pid() else t['h_off'],
-             t['h_iso_ok'] if lab.iso_state() == 'verified' else t['h_iso_no']]
+             t['h_iso_ok'] if iso == 'verified' else
+             (t['h_iso_no'] if iso == 'missing ISO' else translate(lab, iso))]
     if busy(lab.oplock):
         state.append(t['h_busy'])
     return ' · '.join(state) + '\n' + t['keys']

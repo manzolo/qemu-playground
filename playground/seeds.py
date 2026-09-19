@@ -1,12 +1,14 @@
 """Render guest installation inputs. No host shell interpolation."""
 import base64
 import json
+import shlex
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from .core import LabError, atomic, run
+from .desktop import lubuntu_check
 
 
-def ubuntu_seed(cfg, public_key, password_hash, token):
+def lubuntu_seed(cfg, public_key, password_hash, token):
     def command(text):
         return ['sh', '-c', text]
     data = {'autoinstall': {
@@ -16,14 +18,15 @@ def ubuntu_seed(cfg, public_key, password_hash, token):
         'identity': {'hostname': cfg['LAB_HOSTNAME'], 'username': cfg['LAB_USER'], 'password': password_hash},
         'ssh': {'install-server': True, 'allow-pw': False, 'authorized-keys': [public_key.strip()]},
         'storage': {'layout': {'name': 'direct'}},
-        'apt': {'geoip': False, 'fallback': 'offline-install'},
+        # The desktop is required: an unreachable mirror must fail, never leave a
+        # server-only guest carrying a successful installation token.
+        'apt': {'geoip': False, 'fallback': 'abort'},
+        'packages': ['lubuntu-desktop', 'qemu-guest-agent'],
         'late-commands': [
-            command('timeout 180 curtin in-target -- sh -c "apt-get update && apt-get install -y qemu-guest-agent" '
-                    '|| echo "WARNING: optional guest agent package unavailable" > /dev/ttyS0'),
             command('curtin in-target -- systemctl enable serial-getty@ttyS0.service'),
-            *([command('timeout 2400 curtin in-target -- sh -c "apt-get update && apt-get install -y '
-                       'ubuntu-desktop-minimal" || echo "WARNING: optional desktop unavailable" > /dev/ttyS0')]
-              if cfg['LAB_DESKTOP'] == '1' else []),
+            command('curtin in-target -- systemctl enable sddm.service'),
+            command('curtin in-target -- systemctl set-default graphical.target'),
+            command('curtin in-target -- sh -c ' + shlex.quote(lubuntu_check())),
             command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],
         'error-commands': [command('sync; printf "\\nLAB_FAIL_' + token + '\\n" > /dev/ttyS0')],
         'shutdown': 'poweroff'}}
@@ -150,9 +153,9 @@ def render(lab, token):
     public = lab.safe('keys', 'id_ed25519.pub').read_text().strip()
     folder = lab.safe('work', lab.vm, 'seed')
     folder.mkdir(exist_ok=True, mode=0o700)
-    if lab.vm == 'ubuntu-26.04':
+    if lab.vm == 'lubuntu-26.04':
         hashed = run(['openssl', 'passwd', '-6', '-stdin'], input=cfg['LAB_PASSWORD'] + '\n', capture=True).strip()
-        atomic(folder / 'user-data', ubuntu_seed(cfg, public, hashed, token))
+        atomic(folder / 'user-data', lubuntu_seed(cfg, public, hashed, token))
         atomic(folder / 'meta-data', json.dumps({'instance-id': token, 'local-hostname': cfg['LAB_HOSTNAME']}))
     else:
         xml, script = windows_seed(cfg, public, token, (lab.root / 'templates' / 'windows-setup.ps1').read_text())

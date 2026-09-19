@@ -1,15 +1,19 @@
 # Validation
 
-Implementation checks and the first real-guest run, 2026-09-16.
+Implementation checks and real-guest runs. The `ubuntu-26.04` results are from 2026-09-16;
+the `lubuntu-26.04` profile that replaced it was introduced on 2026-09-19 and installed on a
+real guest the same day — with a caveat about the host-side record, below.
 
 ## Automated suite
 
-- Standard-library unit/contract suite: **45 tests passed**; configuration and dry-run isolation,
+- Standard-library unit/contract suite: **62 tests passed**; configuration and dry-run isolation,
   vendor hash checking and cache invalidation, XML/JSON seeds, SSH isolation and exit status,
   process identity, selective cleanup and symlink refusal, locks, QMP framing/timeouts,
   token-before-exit handling, failure evidence, passive screenshots, PNG encoding, explicit
-  nudges, escaped self-contained reports.
-- **3 real-tool smoke tests passed**, including Ubuntu preparation from a tiny synthetic ISO
+  nudges, escaped self-contained reports, the required Lubuntu desktop in the seed (including
+  a legacy `LAB_DESKTOP` value being ignored rather than honoured) and the guided menu's
+  recommendation for each lab state.
+- **3 real-tool smoke tests passed**, including Lubuntu preparation from a tiny synthetic ISO
   (kernel extraction, real qcow2 creation, SSH key generation and readable NoCloud seed).
   Real QEMU 10.2.1 TCG smoke tests for **both** VM command lines: firmware starts, process
   ownership is recognized, concurrent QMP clients serialize correctly, framebuffer becomes a
@@ -18,18 +22,59 @@ Implementation checks and the first real-guest run, 2026-09-16.
 - Bash syntax and ShellCheck on both entrypoint and menu. The fzf fallback was opened in a real
   PTY; profile switching, Ctrl-C and explicit exit were exercised.
 - HTML and PDF rendering passed with installed optional dependencies.
-- Dry runs for Ubuntu and Windows without ISO images or optional Python packages.
+- Dry runs for Lubuntu and Windows without ISO images or optional Python packages.
 
 The QEMU smoke tests create fresh temporary 64 MiB disks and boot firmware only. They do not use
 a developer's VM or install an operating system. CI on ordinary Linux runners runs the unit tests
 without QEMU.
 
-## Real guests, 2026-09-16
+## Real guests
 
-Both profiles were installed unattended on a KVM host and then reached over SSH with the
-dedicated key.
+### Lubuntu 26.04 — installed in the guest, unrecorded on the host
 
-### Ubuntu 26.04 — one attempt, passed
+**The guest installation passed. The lab did not record it.** Both halves matter.
+
+In the guest, on a KVM host: QEMU launched at 14:24:30, the installer emitted
+`LAB_OK_7b4dd81f43343d44264cdf42` and the machine powered itself off at about 14:37:54 —
+roughly **800 s** (the watcher polled every 15 s, and the kernel's own last line is
+`[ 803.533885] reboot: Power down`). Disk **11,940,331,520 bytes**, against 6,471,417,856 for
+the Server profile it replaces: the desktop costs about **1.85x** the disk and a little over
+twice the wall clock.
+
+The evidence that the desktop gate works is in `work/lubuntu-26.04/serial.log`, where all four
+late-commands reach `finish:` in order:
+
+```
+finish:  subiquity/Late/run_user_supplied/command_0: ... systemctl enable serial-getty@ttyS0.service
+finish:  subiquity/Late/run_user_supplied/command_1: ... systemctl enable sddm.service
+finish:  subiquity/Late/run_user_supplied/command_2: ... systemctl set-default graphical.target
+finish:  subiquity/Late/run_user_supplied/command_3: ... dpkg-query ... lxqt-session ... sddm.service
+```
+
+`command_3` is `desktop.lubuntu_check()`, which carries no `|| true`; the token is written only
+after it returns. So the token here means what the profile claims it means, and a run where the
+desktop was missing would have taken the error path instead.
+
+**What went wrong on the host.** `work/lubuntu-26.04/events.jsonl` stops at the `qemu`/`console`
+events of 14:24:30. There is no `installation` event, no `command-end` for the install, and no
+`out/lubuntu-26.04.html`. The background installation worker was killed — the menu it was
+launched from was restarted at 14:28 and 14:29 — so nothing was left watching the serial log
+for the token or waiting for QEMU to exit. `attempt.json` survives without a verdict, which is
+why the lab correctly reports *"This disk has an unvalidated installation attempt"*: from its own
+records, it cannot tell this run from a failure.
+
+This is a gap the profile change does not close, and it should not be papered over by the fact
+that a human read the log afterwards. The two facts the lab treats as proof — the token and a
+spontaneous exit — were both produced and both left on disk, and the verdict was lost anyway
+because only a live process was looking. Detaching by default is documented; losing the evidence
+when the parent dies is not, and a background command returning zero already means only that a
+worker was launched. Recovering a verdict from `serial.log` and the QEMU exit after the fact is
+not implemented.
+
+So: the desktop mechanism is validated on a real guest, and the unattended verdict for this
+particular run is not — there is no lab-generated report to show for it.
+
+### Ubuntu Server 26.04 (superseded profile) — one attempt, passed
 
 Installation `passed (unattended)` in **371 s**. Disk **6,471,417,856 bytes**. Afterwards, on the
 booted guest:
@@ -40,7 +85,7 @@ Linux playground 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 04:2
 Ubuntu 26.04 LTS
 ```
 
-Evidence in `out/ubuntu-26.04.html`. A second `install` on the same disk was refused —
+Evidence was written to `out/ubuntu-26.04.html`. A second `install` on the same disk was refused —
 *"Disk already used for an installation attempt. Preserved by default."* — which is the retention
 policy working as designed, not a defect.
 
@@ -71,7 +116,7 @@ Evidence in `out/windows-11.html`, which keeps every attempt.
 Run 5 is the one that makes the rest mean something: both profiles were wiped and
 reinstalled from scratch, in parallel on the same host, with every fix already in
 place. It passed on the first attempt in essentially the same time as run 4 (2,034 s
-against 2,021 s), so the flow is reproducible rather than lucky. Ubuntu, reinstalled
+against 2,021 s), so the flow is reproducible rather than lucky. Ubuntu Server, reinstalled
 alongside it, passed in 371 s again.
 
 **The progression matters more than the final green.** Attempts 1 and 2 died before the guest
@@ -97,12 +142,15 @@ plus the real-QEMU smoke tests under **TCG**, which need no `/dev/kvm`: firmware
 for both profiles, concurrent QMP clients, a screenshot encoded to PNG and embedded in
 a report, and a seed built from a synthetic ISO. Seconds, and no guest is installed.
 
-A whole Ubuntu installation with no KVM at all lives in a separate workflow, run on
-a `v*` tag and from a manual button. **It has never run on a GitHub runner**: the same
-install takes 370 s under KVM here and emulation is slower by a large factor, the ISO
-is 2.7 GB and the disk grows past 6 GB on a runner with little spare space. Expect the
-first real run to need its timeout and its disk cleanup tuned. It uploads `out/`, the
-serial log and the event log whatever the outcome, so a failure arrives as evidence.
+A whole Lubuntu installation with no KVM at all lives in a separate workflow, run on
+a `v*` tag and from a manual button. **It has never run on a GitHub runner**: the Server
+install it grew out of took 370 s under KVM here, emulation is slower by a large factor,
+the ISO is 2.7 GB and the disk grows past 6 GB on a runner with little spare space. The
+desktop makes all three worse — more packages to fetch from the archive and more disk —
+and the job now runs `up`, so it also waits for the installed guest to boot and answer
+the desktop check. Expect the first real run to need its timeout and its disk cleanup
+tuned. It uploads `out/`, the serial log and the event log whatever the outcome, so a
+failure arrives as evidence.
 
 ## Still not validated
 
@@ -113,18 +161,29 @@ serial log and the event log whatever the outcome, so a failure arrives as evide
 - **The interactive tmux layout**: tmux is not installed on this host, so only the fzf fallback
   has been exercised.
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
-- Behaviour on media other than the pinned Ubuntu ISO and the imported Italian x64 Windows ISO.
+- **The installed Lubuntu guest actually booting**: the run above ended at poweroff, so the
+  LXQt login on the graphical console, key-authenticated SSH into the installed system, and the
+  `desktop-ready` event that `up` records are all still unobserved. Only the installer's own
+  in-target check has been seen to pass.
+- **A lab-recorded unattended verdict for this profile**: see above — the one real run lost its
+  host-side record, so no `installation` event and no report exist for it.
+- **Recovery of a verdict after the installation worker dies**, which the run above showed is a
+  reachable state and which nothing currently handles.
+- **`apt.fallback: abort` actually aborting**: no run has yet been made with the archive
+  unreachable, so the failure path this profile depends on has been read, not exercised.
+- Behaviour on media other than the pinned Ubuntu bootstrap ISO and the imported Italian x64
+  Windows ISO.
 
 ## To repeat the acceptance test on another KVM host
 
 ```bash
 ./lab doctor
 ./lab config init
-./lab up ubuntu-26.04 --foreground
-./lab ssh ubuntu-26.04 -- 'uname -a'
-./lab shot ubuntu-26.04
-./lab stop ubuntu-26.04
-./lab report ubuntu-26.04 --pdf
+./lab up lubuntu-26.04 --foreground
+./lab ssh lubuntu-26.04 -- 'uname -a; systemctl get-default; systemctl is-active display-manager'
+./lab shot lubuntu-26.04          # should show the SDDM/LXQt login, not a text console
+./lab stop lubuntu-26.04
+./lab report lubuntu-26.04 --pdf
 # Supply Windows ISO and QGA inputs as documented in WINDOWS.md, then:
 ./lab up windows-11 --foreground
 ./lab ssh windows-11 -- 'ver'

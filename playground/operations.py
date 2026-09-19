@@ -153,12 +153,12 @@ def prepare(lab, dry=False):
         run(['qemu-img', 'create', '-f', 'qcow2', lab.disk, lab.cfg['LAB_DISK_GB'] + 'G'], dry=True)
         print(f'Render {lab.vm} seed using dedicated keys/id_ed25519.pub; no secrets printed.')
         print(f'Forget any pinned host key for [127.0.0.1]:{lab.port}; the disk is recreated.')
-        if lab.vm == 'ubuntu-26.04':
+        if lab.vm == 'lubuntu-26.04':
             for name in ('vmlinuz', 'initrd'):
                 run(['xorriso', '-osirrox', 'on', '-indev', lab.iso, '-extract', '/casper/' + name, lab.work / name], dry=True)
         else:
             print('Verify the pinned QGA MSI digest; stage the Windows ISO and use efisys_noprompt.bin (no injected keys).')
-        run(['genisoimage', '-quiet', '-J', '-r', '-V', 'cidata' if lab.vm == 'ubuntu-26.04' else 'QPL_SEED',
+        run(['genisoimage', '-quiet', '-J', '-r', '-V', 'cidata' if lab.vm == 'lubuntu-26.04' else 'QPL_SEED',
              '-o', lab.seed, lab.work / 'seed'], dry=True)
         return
     if lab.pid():
@@ -184,7 +184,7 @@ def prepare(lab, dry=False):
         print(f'Forgetting the old host key for [127.0.0.1]:{lab.port}: this disk is new.')
         run(['ssh-keygen', '-q', '-R', f'[127.0.0.1]:{lab.port}', '-f', str(known)], timeout=30)
     folder = render(lab, token)
-    if lab.vm == 'ubuntu-26.04':
+    if lab.vm == 'lubuntu-26.04':
         for name in ('vmlinuz', 'initrd'):
             target = lab.safe('work', lab.vm, name)
             if not target.exists():
@@ -220,7 +220,7 @@ def prepare(lab, dry=False):
         run(['qemu-img', 'create', '-f', 'qcow2', lab.disk, lab.cfg['LAB_DISK_GB'] + 'G'])
     else:
         run(['qemu-img', 'check', lab.disk], timeout=120)
-    run(['genisoimage', '-quiet', '-J', '-r', '-V', 'cidata' if lab.vm == 'ubuntu-26.04' else 'QPL_SEED',
+    run(['genisoimage', '-quiet', '-J', '-r', '-V', 'cidata' if lab.vm == 'lubuntu-26.04' else 'QPL_SEED',
          '-o', lab.seed, folder], timeout=120)
     atomic(lab.work / 'prepared.json', json.dumps({'token': token, 'time': time.time(),
            'config': configuration_digest(lab), 'seed_sha256': sha256(lab.seed)}))

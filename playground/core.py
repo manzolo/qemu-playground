@@ -16,7 +16,7 @@ import subprocess
 import time
 
 ACTIVE_LAB = ContextVar('active_lab', default=None)
-PROFILES = ('ubuntu-26.04', 'windows-11')
+PROFILES = ('lubuntu-26.04', 'windows-11')
 DEFAULTS = dict(LAB_USER='labuser', LAB_PASSWORD='', LAB_LOCALE='it_IT.UTF-8',
     LAB_KEYBOARD='it', LAB_TIMEZONE='Europe/Rome', LAB_HOSTNAME='playground',
     LAB_DISK_GB='64', LAB_RAM_MB='4096', LAB_CPUS='2', LAB_SSH_PORT='2400',
@@ -26,7 +26,7 @@ DEFAULTS = dict(LAB_USER='labuser', LAB_PASSWORD='', LAB_LOCALE='it_IT.UTF-8',
     LAB_OVMF_CODE='/usr/share/OVMF/OVMF_CODE_4M.ms.fd',
     LAB_OVMF_VARS='/usr/share/OVMF/OVMF_VARS_4M.ms.fd',
     LAB_QGA_MSI='', LAB_QGA_SHA256='', LAB_QGA_SOURCE='', LAB_LANG='en',
-    LAB_VNC_PORT='5940', LAB_DESKTOP='0', LAB_AUDIO='none')
+    LAB_VNC_PORT='5940', LAB_AUDIO='none')
 
 class LabError(Exception):
     pass
@@ -186,7 +186,7 @@ def run(argv, *, timeout=120, dry=False, capture=False, input=None):
 
 
 class Lab:
-    def __init__(self, root, vm='ubuntu-26.04'):
+    def __init__(self, root, vm='lubuntu-26.04'):
         if vm not in PROFILES:
             raise LabError(f'Unknown profile: {vm}')
         self.root = Path(root).absolute()
@@ -203,6 +203,9 @@ class Lab:
                     continue
                 key, sep, value = line.partition('=')
                 key, value = key.strip(), value.strip()
+                # Accepted only for old local configs; Lubuntu always has LXQt.
+                if sep and key == 'LAB_DESKTOP':
+                    continue
                 if not sep or key not in DEFAULTS:
                     raise LabError(f'.env:{n}: unknown or invalid setting {key}')
                 if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
@@ -260,8 +263,6 @@ class Lab:
             raise LabError('LAB_ACCEL must be kvm or tcg')
         if self.cfg['LAB_AUDIO'] not in ('none', 'pipewire', 'pa', 'alsa', 'jack', 'oss', 'dbus', 'sdl'):
             raise LabError('LAB_AUDIO must be none or a QEMU audio backend (see qemu-system-x86_64 -audiodev help)')
-        if self.cfg['LAB_DESKTOP'] not in ('0', '1'):
-            raise LabError('LAB_DESKTOP must be 0 or 1')
         if self.cfg['LAB_LANG'] not in ('en', 'it'):
             raise LabError('LAB_LANG must be en or it')
         try:
