@@ -60,10 +60,20 @@ def sddm_conf(cfg):
     return '\n'.join(blocks)
 
 
-def environ(cfg):
-    """The session's own environment, which is where several of these settings are
-    either true or merely written down in a file somewhere."""
-    return f'/proc/"$(pgrep -u {cfg["LAB_USER"]} -x lxqt-session | head -1)"/environ'
+def environ(cfg, process='lxqt-session'):
+    """A live process's environment, which is where these settings are either true
+    or merely written down in a file somewhere.
+
+    Which process matters. `/proc/<pid>/environ` is what a process was *started*
+    with, not what it holds now, and lxqt-session applies its `[Environment]` block
+    by setting variables for the programs it then launches. Reading `LANG` off
+    lxqt-session itself therefore reports whatever SDDM handed it - nothing, or
+    `C.UTF-8` - however well the session is configured, and it once agreed with the
+    file by coincidence. A child LXQt started carries the applied value. `DISPLAY`
+    and `XAUTHORITY` are the opposite case: SDDM sets those before exec, so they are
+    in lxqt-session's own environment and nowhere else this early.
+    """
+    return f'/proc/"$(pgrep -u {cfg["LAB_USER"]} -x {process} | head -1)"/environ'
 
 
 def lubuntu_check(cfg, *, running=False):
@@ -101,7 +111,8 @@ def lubuntu_check(cfg, *, running=False):
             # locale in three system files still lost to systemd's C.UTF-8, and
             # only the session's own environment says which one won. environ is
             # NUL-separated, hence -z.
-            checks.append(f'grep -qz "^LANG={cfg["LAB_LOCALE"]}$" {environ(cfg)}')
+            checks.append(f'grep -qz "^LANG={cfg["LAB_LOCALE"]}$" '
+                          + environ(cfg, 'lxqt-panel'))
             # Same rule for blanking: the autostart entry existing is not the X
             # server having acted on it, and only the X server can say.
             checks.append(f'env $(tr "\\0" "\\n" < {environ(cfg)} '

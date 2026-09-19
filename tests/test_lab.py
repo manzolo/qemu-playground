@@ -523,7 +523,11 @@ class LabCase(unittest.TestCase):
         self.assertIn(f'grep -qx "LANG=it_IT.UTF-8" {SESSION_CONF}', check)
         # The file being right is not the session having read it, and that gap is
         # the entire defect, so the running check reads the session's environment.
-        self.assertIn('pgrep -u labuser -x lxqt-session', check)
+        # Read off a child LXQt started, never off lxqt-session: /proc/<pid>/environ
+        # is what a process was started with, and lxqt-session applies [Environment]
+        # to the programs it launches, not retroactively to itself.
+        self.assertIn('pgrep -u labuser -x lxqt-panel', check)
+        self.assertNotIn(f'LANG=it_IT.UTF-8$" /proc/"$(pgrep -u labuser -x lxqt-session', check)
         self.assertIn('"/environ', check)
         # There is no session to read before the guest is up, or when nothing logs in.
         self.assertNotIn('pgrep', lubuntu_check(cfg))

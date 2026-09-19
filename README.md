@@ -18,8 +18,10 @@ disk with the graphical console switched off so nothing could attach to it,
 rather than applied afterwards, and `desktop-ready` recorded 17 s after the guest booted
 into an Italian LXQt session by itself. Two attempts before it failed in ways worth
 reading about. A defect found afterwards — the desktop blanking after ten
-minutes idle, taking the passive screenshot timeline with it — is fixed and verified
-across a cold boot, but no installation has yet written that last file from the seed.
+minutes idle, taking the passive screenshot timeline with it — is fixed, and a sixth
+installation demonstrated the fix by being photographed 39 minutes into an idle
+session. That sixth run also caught a bug in the readiness check itself rather than in
+the guest, which is written up too.
 The earlier Ubuntu Server and Windows results are kept but do not validate this profile.
 Read [validation](docs/VALIDATION.md) before trusting any of it.
 

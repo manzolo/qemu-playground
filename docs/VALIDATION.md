@@ -6,7 +6,7 @@ real guest the same day — with a caveat about the host-side record, below.
 
 ## Automated suite
 
-- Standard-library unit/contract suite: **67 tests passed**; configuration and dry-run isolation,
+- Standard-library unit/contract suite: **69 tests passed**; configuration and dry-run isolation,
   vendor hash checking and cache invalidation, XML/JSON seeds, SSH isolation and exit status,
   process identity, selective cleanup and symlink refusal, locks, QMP framing/timeouts,
   token-before-exit handling, failure evidence, passive screenshots, PNG encoding, explicit
@@ -312,6 +312,32 @@ grep '"kind": "intervention"' work/windows-11/events.jsonl
 Also observed and not smoothed over: stopping attempt 3's VM with `./lab stop` **timed out after
 220 s** waiting for guest shutdown and needed `stop --force`.
 
+### Lubuntu 26.04, attempt 6 — a correct guest, and a check that called it broken
+
+Installed from the seed with `LAB_VNC_PORT=0`: `passed (unattended)` in **1,205.64 s**, verdict
+`passed (unattended) — attempt 6`, no console events. Then `up` timed out after 300 s again, and
+there is no `ssh-ready` or `desktop-ready` event for it.
+
+The guest was fine. Walking the check condition by condition, seventeen passed — including the
+new `xset` one, so the autostart entry written by the seed had disabled blanking on its own — and
+the locale condition failed. `lxqt-session` had no `LANG` in its environment at all; `lxqt-panel`,
+`pcmanfm-qt` and `lxqt-globalkeys` all had `LANG=it_IT.UTF-8`, and the desktop was in Italian.
+
+`/proc/<pid>/environ` is the environment a process was **started** with. LXQt applies its
+`[Environment]` block by setting variables for the programs it launches, so the session leader
+itself never shows it. That explains all three readings this profile has produced: nothing here,
+`C.UTF-8` on attempt 4, and on attempt 5 the right answer by coincidence — the worst of them,
+because it was taken as proof. The check now reads `lxqt-panel`. `DISPLAY` and `XAUTHORITY` keep
+reading `lxqt-session`, since SDDM sets those before exec.
+
+With that corrected, all 18 conditions pass against attempt 6's guest, which was installed
+entirely from the seed and touched by nothing afterwards. The screenshot in `docs/images/` is that
+guest — and it was taken **39 minutes** after the session started, which is the blanking fix
+demonstrating itself: before it, ten minutes was enough to turn `shot` into a serial log dump.
+
+What is still missing is a run where `up` itself goes green, because the only installation made
+since the check reached 18 conditions is the one the bug failed.
+
 ## Continuous integration
 
 Every push runs the standard-library suite and the dry runs on Python 3.10 and 3.14,
@@ -343,9 +369,8 @@ failure arrives as evidence.
   password at the corrected `it` greeter.
 - **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
   and whether that is worth correcting at the source rather than worked around in the session.
-- **An installation that writes the autostart entry from the seed.** The mechanism is proven
-  across a cold boot and a unit test asserts the seed produces the file byte for byte, but the
-  guest that has it received it by hand.
+- **A green `up` for this profile since the check reached 18 conditions.** Attempt 6's guest
+  passes all of them, but the run that produced it did not: see below.
 - **Why attempt 5 took 1,092 s against attempt 3's 750 s** on the same host and media.
 - **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
   turning the console off entirely, which is not what most runs will do.
