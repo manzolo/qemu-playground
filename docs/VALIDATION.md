@@ -6,13 +6,15 @@ real guest the same day — with a caveat about the host-side record, below.
 
 ## Automated suite
 
-- Standard-library unit/contract suite: **62 tests passed**; configuration and dry-run isolation,
+- Standard-library unit/contract suite: **66 tests passed**; configuration and dry-run isolation,
   vendor hash checking and cache invalidation, XML/JSON seeds, SSH isolation and exit status,
   process identity, selective cleanup and symlink refusal, locks, QMP framing/timeouts,
   token-before-exit handling, failure evidence, passive screenshots, PNG encoding, explicit
   nudges, escaped self-contained reports, the required Lubuntu desktop in the seed (including
   a legacy `LAB_DESKTOP` value being ignored rather than honoured) and the guided menu's
-  recommendation for each lab state.
+  recommendation for each lab state, the SDDM drop-in and greeter keyboard, autologin
+  being configurable and checked only when on, and verdict recovery from an archived
+  serial log including the three states where it refuses to guess.
 - **3 real-tool smoke tests passed**, including Lubuntu preparation from a tiny synthetic ISO
   (kernel extraction, real qcow2 creation, SSH key generation and readable NoCloud seed).
   Real QEMU 10.2.1 TCG smoke tests for **both** VM command lines: firmware starts, process
@@ -87,16 +89,38 @@ running guest, and the screenshot in `docs/images/lubuntu-26.04-installed.png` i
 SDDM greeter offering the `Lubuntu` session for `labuser`. `lsb_release` says `Ubuntu 26.04 LTS`
 because the bootstrap medium is Ubuntu Server; the desktop on top is what the profile adds.
 
-**Observed and not smoothed over: the greeter offers the wrong keyboard.** With `LAB_KEYBOARD=it`
-the installed system is configured correctly — `XKBLAYOUT="it"` in `/etc/default/keyboard` and
-`X11 Layout: it` from `localectl` — but SDDM's greeter shows `Layout: us`, visible in the
-screenshot above. The console password is typed at that greeter, and `-` is not in the same place
-on the two layouts, so the one credential this profile exists to let you use can be mistyped at
-the one screen that needs it. Nothing in the seed configures the greeter's layout. Not fixed.
+**The greeter's keyboard was wrong, and was fixed.** With `LAB_KEYBOARD=it` the installed system
+was configured correctly — `XKBLAYOUT="it"` in `/etc/default/keyboard`, `X11 Layout: it` from
+`localectl` — but SDDM's greeter offered `Layout: us`: it starts the greeter on an X server of
+its own and reads neither. The seed now writes `/etc/sddm.conf.d/90-lab.conf` and a
+`DisplayCommand` script that runs `setxkbmap`. Applied to the running guest, the greeter came
+back reading `it` and in Italian.
 
-So: the profile is validated on a real guest end to end, from unattended installation to a
-graphical login reached from a cold boot. What is missing is the lab's own record of it — the
-run has no `installation` event and no report — and the greeter's keyboard.
+**Autologin was added and checked in both directions.** With the drop-in in place the guest boots
+straight into the LXQt session, which is the screenshot in `docs/images/`. The check that proves
+it is not "a session exists for the lab user" — the SSH connection running the check makes one of
+those on any guest — but the *active session on seat0*, which must belong to the lab user. Both
+outcomes were exercised on the live guest:
+
+```
+with [Autologin]:     seat0 active session = labuser   -> LAB_AUTOLOGIN=1 check passes
+without [Autologin]:  seat0 active session = sddm      -> LAB_AUTOLOGIN=1 check fails,
+                                                          LAB_AUTOLOGIN=0 check passes
+```
+
+The full `lubuntu_check(cfg, running=True)` string — thirteen conditions, the one `up` sends —
+was run against the booted guest and exited zero.
+
+**The lost verdict was recovered.** `./lab recover lubuntu-26.04` was run against the real orphaned
+attempt described above. It searched three serial logs, found `LAB_OK_7b4dd81f43343d44264cdf42` in
+the archived `serial-1789821625642098850.log`, recorded
+`passed (unattended, recovered; QEMU exit not observed)`, wrote `out/lubuntu-26.04.html`, and the
+guided menu moved from step 4 to step 5. Run a second time it refused, naming the verdict already
+there.
+
+So: the profile is validated on a real guest end to end — unattended installation, a graphical
+login reached from a cold boot, autologin, the greeter's keyboard, and a recovered verdict for the
+one run whose record was lost.
 
 ### Ubuntu Server 26.04 (superseded profile) — one attempt, passed
 
@@ -185,16 +209,17 @@ failure arrives as evidence.
 - **The interactive tmux layout**: tmux is not installed on this host, so only the fzf fallback
   has been exercised.
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
-- **The `desktop-ready` event and the screenshot `up` takes**: the checks they depend on were
-  run by hand against the booted guest and passed, but no `up --foreground` has carried an
-  installation through to them in one piece.
-- **Logging into the LXQt session.** The greeter was reached and photographed; nobody typed the
-  password, and the greeter's keyboard layout is wrong (above), so the session itself — panel,
-  file manager, terminal — is unseen.
-- **A lab-recorded unattended verdict for this profile**: see above — the one real run lost its
-  host-side record, so no `installation` event and no report exist for it.
-- **Recovery of a verdict after the installation worker dies**, which the run above showed is a
-  reachable state and which nothing currently handles.
+- **An installation that applies these settings from the seed.** The SDDM drop-in, the greeter
+  keyboard and autologin were all validated by writing them to a guest that was already
+  installed, and the seed is asserted to write byte-identical files by a unit test. No guest has
+  yet been installed from scratch with them in place, so the late commands that write them, and
+  the token gating on the extended check, are unexercised on real media.
+- **The `desktop-ready` event and the screenshot `up` takes**: the checks they depend on passed
+  by hand against the booted guest, but no `up --foreground` has carried an installation through
+  to them in one piece.
+- **Typing the password at the greeter.** `LAB_AUTOLOGIN=0` was exercised only as far as the
+  check; nobody logged in by hand on the corrected `it` layout.
+- **A verdict recorded live for this profile**: the only one it has was recovered after the fact.
 - **`apt.fallback: abort` actually aborting**: no run has yet been made with the archive
   unreachable, so the failure path this profile depends on has been read, not exercised.
 - Behaviour on media other than the pinned Ubuntu bootstrap ISO and the imported Italian x64

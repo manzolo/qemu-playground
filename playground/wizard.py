@@ -23,6 +23,7 @@ TEXT = {
         running='The VM is running. Open a console or connect over SSH.',
         waiting='An operation is running. Refresh to see the next step; Ctrl-L opens the live log.',
         recovery='This disk has an unvalidated installation attempt. Inspect the report and logs before retrying.',
+        orphan='No verdict was ever recorded for this attempt: the worker that watches the\ninstallation did not survive it. Read the verdict back out of the serial logs.',
         unknown='This disk has no preparation record. Inspect it under Machine operations before continuing.',
         blocked='Resolve the preparation requirements in configuration, then refresh.',
         win_import='Import the Windows ISO',
@@ -48,6 +49,7 @@ TEXT = {
         running='La VM è accesa. Apri una console oppure collegati via SSH.',
         waiting='Operazione in corso. Aggiorna per vedere il prossimo passo; Ctrl-L apre il log in diretta.',
         recovery='Il disco ha un tentativo di installazione non validato. Controlla report e log prima di riprovare.',
+        orphan='Per questo tentativo non è stato registrato alcun esito: il processo che sorveglia\nl’installazione non è sopravvissuto. Rileggi l’esito dai log seriali.',
         unknown='Il disco non ha un record di preparazione. Controllalo in Operazioni sulla macchina.',
         blocked='Risolvi i requisiti di preparazione nella configurazione, poi aggiorna.',
         win_import='Importa la ISO di Windows',
@@ -91,7 +93,13 @@ def next_step(lab, items):
     if disk and (lab.work / 'attempt.json').exists():
         history = [e for e in records(lab.work / 'events.jsonl')
                    if e.get('kind') == 'installation' and e.get('time', 0) >= attempt.get('start', float('inf'))]
-        if not history or not history[-1].get('outcome', '').startswith('passed'):
+        if not history:
+            # The evidence is on disk and nothing read it; that is recoverable,
+            # and guessing from the disk instead would be the lie this avoids.
+            if not lab.pid():
+                return 4, t['orphan'], action('recover', v)
+            return 4, t['orphan'], navigation(lab, 'machine')
+        if not history[-1].get('outcome', '').startswith('passed'):
             return 4, t['recovery'], action('report', v, '--open')
         if not lab.pid():
             return 5, t['start'], action('start', v)

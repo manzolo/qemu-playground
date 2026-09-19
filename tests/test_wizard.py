@@ -83,7 +83,9 @@ class WizardTests(unittest.TestCase):
         atomic(self.lab.work / 'attempt.json', '{"start": 100}')
         events = self.lab.work / 'events.jsonl'
         atomic(events, '{"kind": "installation", "time": 50, "outcome": "passed (unattended)"}\n')
-        self.assertEqual(self.primary()['command'], ['report', self.lab.vm, '--open'])
+        # A verdict older than the attempt is not this attempt's verdict, so the
+        # attempt still counts as unrecorded and recovery is what it needs.
+        self.assertEqual(self.primary()['command'], ['recover', self.lab.vm])
         atomic(events, '{"kind": "installation", "time": 101, "outcome": "passed (unattended)"}\n')
         # Booting an installed disk does not require the original ISO or spare install RAM.
         with patch('playground.interface.readiness', return_value={'ready': False}):

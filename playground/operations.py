@@ -460,6 +460,63 @@ def install(lab, dry=False, nudge=False):
         report(lab)
 
 
+def serial_logs(lab):
+    """Newest first. QEMU truncates a file: log, so start() archives the previous
+    one before each boot and an installation's output may be in either place."""
+    archived = sorted((lab.work / 'logs').glob('serial-*.log'),
+                      key=lambda p: p.name, reverse=True)
+    return [lab.serial] + archived
+
+
+def recover(lab, dry=False):
+    """Reconstruct a verdict for an attempt whose watcher did not survive it.
+
+    install() writes the installation event from a process that watches the serial
+    log and then sees QEMU exit. Kill that process - closing the menu it was
+    launched from is enough - and both facts are still produced and still on disk,
+    but nothing records them, so the lab cannot tell the run from a failure. This
+    reads them back. It cannot prove the exit was spontaneous, only that the guest
+    is no longer running, so the verdict it writes says it was recovered.
+    """
+    attempt = read_json(lab.work / 'attempt.json', {})
+    if not attempt.get('token'):
+        raise LabError('No installation attempt to recover; there is no attempt.json')
+    settled = [e for e in records(lab.work / 'events.jsonl')
+               if e.get('kind') == 'installation' and e.get('time', 0) >= attempt['start']]
+    if settled:
+        raise LabError(f'This attempt already has a verdict: {settled[-1]["outcome"]}')
+    if lab.pid():
+        raise LabError('The VM is still running; recovery reads an attempt that has finished')
+    token, found = attempt['token'], None
+    for path in serial_logs(lab):
+        lines = tail(path, 4 * 1024 * 1024).splitlines()
+        if 'LAB_FAIL_' + token in lines:
+            found, outcome = path, 'failed (recovered): the installer emitted its failure token'
+            break
+        if 'LAB_OK_' + token in lines:
+            assisted = any(e.get('kind') == 'intervention' and e['time'] >= attempt['start']
+                           for e in records(lab.work / 'events.jsonl'))
+            found = path
+            outcome = ('passed (assisted, recovered; QEMU exit not observed)' if assisted
+                       else 'passed (unattended, recovered; QEMU exit not observed)')
+            break
+    else:
+        outcome = 'failed (recovered): no completion token in any serial log'
+    where = f'token found in {found.name}' if found else 'no token found'
+    if dry:
+        print(f'Searched {len(serial_logs(lab))} serial log(s) for the token of attempt {token}.')
+        print(f'Would record installation "{outcome}" ({where}) and regenerate the report.')
+        return outcome
+    lab.event(kind='installation', outcome=outcome, detail=(
+        f'Recovered after the installation worker was lost: {where}. The host did not '
+        'watch this attempt, so the token was read afterwards and QEMU exiting on its '
+        'own was never observed.'))
+    print(f'Recorded: {outcome} ({where}).', flush=True)
+    from .report import report
+    report(lab)
+    return outcome
+
+
 def stop(lab, *, force=False, dry=False):
     if dry:
         print(f'QMP system_powerdown; wait {180 if lab.vm == "windows-11" else 60}s; then QGA shutdown; wait 30s')

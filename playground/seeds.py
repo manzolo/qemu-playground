@@ -5,12 +5,20 @@ import shlex
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from .core import LabError, atomic, run
-from .desktop import lubuntu_check
+from .desktop import SDDM_CONF, XSETUP, lubuntu_check, sddm_conf, xsetup_script
 
 
 def lubuntu_seed(cfg, public_key, password_hash, token):
     def command(text):
         return ['sh', '-c', text]
+
+    def install_file(path, content, mode):
+        # base64 so a config file's own quoting cannot collide with the three
+        # levels of shell between here and the target filesystem.
+        blob = base64.b64encode(content.encode()).decode()
+        return command('curtin in-target -- sh -c ' + shlex.quote(
+            f'mkdir -p "$(dirname {path})" && echo {blob} | base64 -d > {path} '
+            f'&& chmod {mode} {path}'))
     data = {'autoinstall': {
         'version': 1, 'interactive-sections': [], 'refresh-installer': {'update': False},
         'locale': cfg['LAB_LOCALE'], 'keyboard': {'layout': cfg['LAB_KEYBOARD']},
@@ -26,7 +34,9 @@ def lubuntu_seed(cfg, public_key, password_hash, token):
             command('curtin in-target -- systemctl enable serial-getty@ttyS0.service'),
             command('curtin in-target -- systemctl enable sddm.service'),
             command('curtin in-target -- systemctl set-default graphical.target'),
-            command('curtin in-target -- sh -c ' + shlex.quote(lubuntu_check())),
+            install_file(XSETUP, xsetup_script(cfg), '0755'),
+            install_file(SDDM_CONF, sddm_conf(cfg), '0644'),
+            command('curtin in-target -- sh -c ' + shlex.quote(lubuntu_check(cfg))),
             command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],
         'error-commands': [command('sync; printf "\\nLAB_FAIL_' + token + '\\n" > /dev/ttyS0')],
         'shutdown': 'poweroff'}}

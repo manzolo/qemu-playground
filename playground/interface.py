@@ -1,6 +1,6 @@
 """Filesystem-derived menu model shared by Bash and the CLI."""
 import shlex
-from .core import PROFILES, Lab, busy, port_free, readiness, records
+from .core import PROFILES, Lab, busy, port_free, read_json, readiness, records
 
 
 def status(lab):
@@ -46,6 +46,9 @@ TEXT = {
         iso_check='Verify the ISO SHA-256', iso_again='Re-download the ISO',
         iso_del='Delete the ISO', prepare='Prepare disk, key and seed',
         install='Install unattended', start='Start the VM', stop='Stop the VM',
+        recover='Recover a lost verdict from the logs',
+        no_attempt='no installation attempt to recover',
+        settled='this attempt already has a verdict',
         status='Lab status', console='Serial console (read-only)',
         shot='Screenshot and open', view='Open the graphical console',
         shell='Open an SSH session',
@@ -76,6 +79,9 @@ TEXT = {
         iso_check='Verifica lo SHA-256 della ISO', iso_again='Riscarica la ISO',
         iso_del='Elimina la ISO', prepare='Prepara disco, chiave e seed',
         install='Installa senza assistenza', start='Avvia la VM', stop='Ferma la VM',
+        recover='Recupera dai log un esito perduto',
+        no_attempt='nessun tentativo di installazione da recuperare',
+        settled='questo tentativo ha già un esito',
         status='Stato del laboratorio', console='Console seriale (sola lettura)',
         shot='Screenshot e apertura', view='Apri la console grafica',
         shell='Apri una sessione SSH',
@@ -149,7 +155,7 @@ def menu_items(lab):
         status = 'blocked' if blocked else ('done' if done else 'todo')
         category = {
             'doctor': 0, 'config': 0, 'iso': 1,
-            'prepare': 2, 'install': 2, 'start': 2, 'stop': 2, 'status': 2,
+            'prepare': 2, 'install': 2, 'start': 2, 'stop': 2, 'status': 2, 'recover': 2,
             'console': 3, 'shot': 3, 'view': 3, 'ssh': 3, 'agent': 3,
             'report': 4, 'clean': 5, '_quit': 6,
         }[cmd[0]]
@@ -180,6 +186,14 @@ def menu_items(lab):
         or stolen or ('' if disk else t['no_disk']))
     add(t['stop'], ['stop', v], '' if running else t['vm_off'], background=True)
     add(t['status'], ['status'], done=True)
+    # Only offered where it can do something: an attempt whose watcher never
+    # wrote a verdict, on a guest that has stopped.
+    attempt = read_json(lab.work / 'attempt.json', {})
+    settled = [e for e in records(lab.work / 'events.jsonl') if e.get('kind') == 'installation'
+               and e.get('time', 0) >= attempt.get('start', 0)]
+    add(t['recover'], ['recover', v], (t['busy'] if active else '') or
+        ('' if attempt else t['no_attempt']) or (t['settled'] if settled else '')
+        or (t['running'] if running else ''), done=bool(settled))
     add(t['console'], ['console', v], t['win_console'] if windows
         else ('' if lab.serial.exists() else t['no_serial']))
     add(t['shot'], ['shot', v], '' if running else t['vm_off'])

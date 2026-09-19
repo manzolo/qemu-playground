@@ -45,6 +45,7 @@ def parser():
         c.add_argument('--nudge', action='store_true', help='Explicitly send Enter once; mark the attempt assisted')
         c.add_argument('--keep-failed', action='store_true', default=True, help='Always enabled; failed disks are retained')
     command('start', vm=True)
+    command('recover', vm=True, help="Read a lost attempt's verdict back out of the serial logs")
     command('view', vm=True, help='Open the graphical console, when LAB_VNC_PORT is set')
     c = command('stop', vm=True)
     c.add_argument('--force', action='store_true')
@@ -105,6 +106,8 @@ def dispatch(lab, args):
         ops.install(lab, dry, args.nudge)
     elif action == 'start':
         ops.start(lab, dry=dry)
+    elif action == 'recover':
+        ops.recover(lab, dry)
     elif action == 'view':
         ops.view(lab, dry)
     elif action == 'stop':
@@ -155,7 +158,7 @@ def dispatch(lab, args):
         if not dry:
             print('Waiting up to 300s for key-authenticated SSH and guest readiness.', flush=True)
             deadline = time.monotonic() + 300
-            cmd = ops.ssh_command(lab, ['ver' if lab.vm == 'windows-11' else lubuntu_check(running=True)])
+            cmd = ops.ssh_command(lab, ['ver' if lab.vm == 'windows-11' else lubuntu_check(lab.cfg, running=True)])
             while time.monotonic() < deadline:
                 if not lab.pid():
                     raise LabError('Guest exited while waiting for SSH; inspect qemu.log and last screen')

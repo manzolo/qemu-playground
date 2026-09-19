@@ -19,7 +19,7 @@ import zlib
 from playground.cli import main
 from playground.core import DEFAULTS, Lab, LabError, atomic, lab_password, lock, records, sha256
 from playground.interface import header, menu_items
-from playground.operations import clean, install, prepare, qemu_command, ssh, ssh_command
+from playground.operations import clean, install, prepare, qemu_command, recover, ssh, ssh_command
 from playground.protocol import JsonSocket, agent, qmp
 from playground.report import report
 from playground.screens import png, ppm, shot
@@ -421,10 +421,101 @@ class LabCase(unittest.TestCase):
             dispatch(self.lab, Namespace(action='up', dry_run=False, nudge=False))
         self.assertEqual(proc.call_count, 2)
         sleep.assert_called_once_with(3)
-        self.assertIn(lubuntu_check(running=True), shlex.split(proc.call_args.args[0][-1]))
+        self.assertIn(lubuntu_check(self.lab.cfg, running=True), shlex.split(proc.call_args.args[0][-1]))
         events = records(self.lab.work / 'events.jsonl')
         self.assertEqual([e['kind'] for e in events], ['ssh-ready', 'desktop-ready'])
         capture.assert_called_once()
+
+    def test_sddm_drop_in_carries_the_greeter_keyboard_and_optional_autologin(self):
+        """SDDM does not read /etc/default/keyboard, so the greeter needs telling."""
+        import base64
+        from playground.desktop import SDDM_CONF, XSETUP, lubuntu_check, sddm_conf, xsetup_script
+        cfg = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_KEYBOARD='it', LAB_USER='labuser')
+        steps = [c[-1] for c in json.loads(
+            lubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']['late-commands']]
+        written = {}
+        for step in steps:
+            if 'base64 -d' in step:
+                blob = step.split('echo ', 1)[1].split(' |', 1)[0]
+                written[step.rsplit('> ', 1)[1].split(' ')[0]] = base64.b64decode(blob).decode()
+        self.assertEqual(written[XSETUP], xsetup_script(cfg))
+        self.assertEqual(written[SDDM_CONF], sddm_conf(cfg))
+        self.assertIn('-layout it', written[XSETUP])
+        self.assertIn('User=labuser', written[SDDM_CONF])
+        self.assertIn('Session=Lubuntu.desktop', written[SDDM_CONF])
+        # Both files are written before the check that gates the token, and the
+        # check is the last thing before it.
+        order = [i for i, s in enumerate(steps) if 'base64 -d' in s or 'dpkg-query' in s]
+        self.assertEqual(order, sorted(order))
+        self.assertIn('LAB_OK_tok', steps[-1])
+        # The greeter script is useless without setxkbmap, so its absence must fail
+        # rather than leave the greeter quietly on another layout.
+        check = lubuntu_check(cfg)
+        self.assertIn('command -v setxkbmap', check)
+        self.assertIn(f'grep -qx "DisplayCommand={XSETUP}" {SDDM_CONF}', check)
+        self.assertNotIn('||', check)
+
+    def test_autologin_is_configurable_and_checked_only_when_on(self):
+        from playground.desktop import lubuntu_check, sddm_conf
+        on = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_AUTOLOGIN='1')
+        off = dict(on, LAB_AUTOLOGIN='0')
+        self.assertIn('[Autologin]', sddm_conf(on))
+        self.assertNotIn('[Autologin]', sddm_conf(off))
+        # Both still configure the greeter's keyboard: turning autologin off is
+        # exactly when the greeter is the screen you type the password at.
+        for cfg in (on, off):
+            self.assertIn('DisplayCommand=', sddm_conf(cfg))
+            self.assertIn('-layout', lubuntu_check(cfg))
+        self.assertIn('User=labuser', lubuntu_check(on))
+        self.assertNotIn('User=labuser', lubuntu_check(off))
+        # An SSH check makes a session for the user too, so "a session exists" would
+        # pass without any autologin; the active session on seat0 is the real claim.
+        running = lubuntu_check(on, running=True)
+        self.assertIn('show-seat seat0 -p ActiveSession', running)
+        self.assertNotIn('seat0', lubuntu_check(off, running=True))
+        atomic(self.root / '.env', 'LAB_AUTOLOGIN=2\n')
+        with self.assertRaisesRegex(LabError, 'LAB_AUTOLOGIN'):
+            Lab(self.root)
+
+    def test_recover_reads_a_lost_verdict_out_of_an_archived_serial_log(self):
+        """QEMU truncates a file: log on every boot, so the token may be archived."""
+        self.lab.ensure()
+        atomic(self.lab.work / 'attempt.json', json.dumps({'token': 'tok', 'start': 100}))
+        (self.lab.work / 'logs').mkdir()
+        (self.lab.work / 'logs' / 'serial-1.log').write_text('boot\nLAB_OK_tok\n')
+        self.lab.serial.write_text('a later boot with no token at all\n')
+        with patch.object(Lab, 'pid', return_value=None), patch('playground.report.report'):
+            outcome = recover(self.lab)
+        self.assertTrue(outcome.startswith('passed (unattended'))
+        # The one thing recovery cannot see is whether QEMU left on its own, so the
+        # verdict has to say so instead of borrowing the live one's wording.
+        self.assertIn('recovered', outcome)
+        self.assertIn('exit not observed', outcome)
+        event = [e for e in records(self.lab.work / 'events.jsonl') if e['kind'] == 'installation'][-1]
+        self.assertEqual(event['outcome'], outcome)
+        self.assertIn('serial-1.log', event['detail'])
+        # A failure token is recovered as a failure, not as an absence of evidence.
+        atomic(self.lab.work / 'events.jsonl', '')
+        (self.lab.work / 'logs' / 'serial-1.log').write_text('LAB_FAIL_tok\n')
+        with patch.object(Lab, 'pid', return_value=None), patch('playground.report.report'):
+            self.assertTrue(recover(self.lab).startswith('failed'))
+
+    def test_recover_refuses_what_it_cannot_honestly_decide(self):
+        self.lab.ensure()
+        with self.assertRaisesRegex(LabError, 'No installation attempt'):
+            recover(self.lab)
+        atomic(self.lab.work / 'attempt.json', json.dumps({'token': 'tok', 'start': 100}))
+        with patch.object(Lab, 'pid', return_value=4242):
+            with self.assertRaisesRegex(LabError, 'still running'):
+                recover(self.lab)
+        # No token anywhere is a failure, not a pass by default.
+        self.lab.serial.write_text('nothing useful\n')
+        with patch.object(Lab, 'pid', return_value=None), patch('playground.report.report'):
+            self.assertIn('no completion token', recover(self.lab))
+        # And a settled attempt is never quietly overwritten with a second verdict.
+        with patch.object(Lab, 'pid', return_value=None):
+            with self.assertRaisesRegex(LabError, 'already has a verdict'):
+                recover(self.lab)
 
     def test_menu_ends_with_a_way_out(self):
         items = menu_items(self.lab)

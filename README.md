@@ -13,24 +13,29 @@ Internet access is required to download the desktop packages.
 
 **Validation status:** on 2026-09-19 the Lubuntu profile installed unattended on a
 real KVM host in about 800 s, with the in-target desktop check passing before the
-completion token, and the installed disk then booted to the SDDM login shown below
-with `display-manager` active. Two things are not green: that run's host-side record
-was lost when its background worker was killed, so it has no `installation` event and
-no report, and SDDM's greeter offers a `us` keyboard although the system is
-configured `it`. The earlier Ubuntu Server and Windows results are kept but do not
-validate this profile. Read [validation](docs/VALIDATION.md) before trusting any of it.
+completion token, and the installed disk then booted to a graphical login. Autologin,
+the greeter's keyboard and the thirteen-condition desktop check were exercised against
+that running guest, in both directions where there are two. What is **not** yet proven
+is an installation that applies those settings from the seed rather than having them
+written afterwards, and that run's verdict had to be recovered from the serial log
+because its background worker was killed. The earlier Ubuntu Server and Windows results
+are kept but do not validate this profile. Read [validation](docs/VALIDATION.md) before
+trusting any of it.
 
 ## What a finished run looks like
 
-Both images are `work/PROFILE/screenshots/` frames from the run described in
-[validation](docs/VALIDATION.md); nothing is staged.
+Both images are `work/PROFILE/screenshots/` frames captured through QMP from the real
+guests described in [validation](docs/VALIDATION.md); nothing is staged or mocked up.
+The Lubuntu frame is the installed guest with the SDDM drop-in applied, which a fresh
+installation now writes from the seed.
 
-![Lubuntu 26.04 installed, at the SDDM graphical login](docs/images/lubuntu-26.04-installed.png)
+![Lubuntu 26.04 installed, at the LXQt desktop after autologin](docs/images/lubuntu-26.04-installed.png)
 
-*Lubuntu 26.04 after the unattended installation, booted from its own disk: SDDM offering the
-`Lubuntu` session for `labuser`. Sign in with the console password from `.env`. The lab never logs
-in here — it connects over SSH with a dedicated key. The predecessor `ubuntu-26.04` profile
-produced a text console at this point, which is why this one exists.*
+*Lubuntu 26.04 after the unattended installation, booted from its own disk: `LAB_AUTOLOGIN=1` is the
+default, so SDDM logs `labuser` straight into the LXQt session. Set it to `0` and you stop at the
+greeter instead, which the lab configures to use `LAB_KEYBOARD`. The lab itself never logs in either
+way — it connects over SSH with a dedicated key. The predecessor `ubuntu-26.04` profile produced a
+text console at this point, which is why this one exists.*
 
 ![Windows 11 desktop during the successful attempt](docs/images/windows-11-installed.png)
 
@@ -87,6 +92,14 @@ view and returns to the menu; it does not stop detached installers or VMs.
 The CLI `install` and `up` also detach by default. Use `--foreground` in automation
 when you need the final exit code. A background command returning zero means its
 worker was launched, **not** that the installation succeeded.
+
+That worker is also what records the verdict: it watches the serial log for the
+completion token and then sees QEMU exit. If it is killed — closing the menu it was
+launched from is enough — both facts still happen and both stay on disk, but nothing
+writes them down, and the lab then cannot tell the run from a failure. `recover VM`
+reads them back afterwards. It cannot see whether QEMU left on its own, only that the
+guest has stopped, so the verdict it writes says it was recovered rather than borrowing
+the wording of one that was watched.
 
 ## Lubuntu, one step at a time
 
@@ -159,6 +172,7 @@ receives `sh -lc`. COM1 carries installer diagnostics, not an interactive shell.
 | `view VM` | Open the graphical console, when `LAB_VNC_PORT` is set |
 | `stop VM [--force]` | ACPI, then QGA fallback; forced signals only when requested |
 | `status` | Both profiles, owned PID, ISO verification, ports, usage and last result |
+| `recover VM` | Read a lost attempt's verdict back out of the serial logs |
 | `ssh VM` | Interactive session on the dedicated key, with a real tty |
 | `ssh VM -- COMMAND` | Dedicated key, no password prompts; actual remote exit status |
 | `agent VM ping\|info\|osinfo\|ip\|shutdown` | QGA without guest networking |
@@ -183,10 +197,17 @@ whether anyone is actually attached, and only when a client connects does the
 verdict say the run is no longer provably unattended. Passive screenshots remain
 the default way to watch: they cannot type.
 
-The installed Lubuntu guest always includes LXQt and a graphical login. Sign in
-using the user and console password from `.env`; SSH remains key-only. The old
-`LAB_DESKTOP` setting is accepted in existing `.env` files but ignored; it cannot
-disable Lubuntu's desktop. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
+The installed Lubuntu guest always includes LXQt and a graphical login. `LAB_AUTOLOGIN`
+is `1` by default, so the lab user arrives straight in the LXQt session; set it to `0`
+to stop at the SDDM greeter, and sign in there with the user and console password from
+`.env`. Autologin means anyone who can reach a running VM's graphical console gets the
+session, so turn it off if that console is not yours alone. SSH is key-only either way,
+and the password is still what `sudo` asks for. SDDM does not read the system's keyboard
+configuration for its own greeter, so the lab writes it a drop-in that applies
+`LAB_KEYBOARD` there too — without it the greeter offers `us` while the installed system
+is Italian, and the password is typed at exactly that screen. The old `LAB_DESKTOP`
+setting is accepted in existing `.env` files but ignored; it cannot disable Lubuntu's
+desktop. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
 `alsa`...) to give the guest a sound card played through the host's daemon; it is
 `none` by default, because a headless host has no daemon and naming a backend that
 is not there stops QEMU from starting.

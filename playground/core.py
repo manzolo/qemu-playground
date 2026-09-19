@@ -26,7 +26,7 @@ DEFAULTS = dict(LAB_USER='labuser', LAB_PASSWORD='', LAB_LOCALE='it_IT.UTF-8',
     LAB_OVMF_CODE='/usr/share/OVMF/OVMF_CODE_4M.ms.fd',
     LAB_OVMF_VARS='/usr/share/OVMF/OVMF_VARS_4M.ms.fd',
     LAB_QGA_MSI='', LAB_QGA_SHA256='', LAB_QGA_SOURCE='', LAB_LANG='en',
-    LAB_VNC_PORT='5940', LAB_AUDIO='none')
+    LAB_VNC_PORT='5940', LAB_AUDIO='none', LAB_AUTOLOGIN='1')
 
 class LabError(Exception):
     pass
@@ -265,6 +265,8 @@ class Lab:
             raise LabError('LAB_AUDIO must be none or a QEMU audio backend (see qemu-system-x86_64 -audiodev help)')
         if self.cfg['LAB_LANG'] not in ('en', 'it'):
             raise LabError('LAB_LANG must be en or it')
+        if self.cfg['LAB_AUTOLOGIN'] not in ('0', '1'):
+            raise LabError('LAB_AUTOLOGIN must be 0 or 1')
         try:
             vnc = int(self.cfg['LAB_VNC_PORT'])
         except ValueError:
