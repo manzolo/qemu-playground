@@ -11,23 +11,21 @@ installed system starts the LXQt graphical login through SDDM. Desktop packages
 and graphical configuration are required; installation fails if they are missing.
 Internet access is required to download the desktop packages.
 
-**Validation status:** on 2026-09-19 the Lubuntu profile installed unattended on a
-real KVM host in about 800 s, with the in-target desktop check passing before the
-completion token, and the installed disk then booted to a graphical login. Autologin,
-the greeter's keyboard and the thirteen-condition desktop check were exercised against
-that running guest, in both directions where there are two. What is **not** yet proven
-is an installation that applies those settings from the seed rather than having them
-written afterwards, and that run's verdict had to be recovered from the serial log
-because its background worker was killed. The earlier Ubuntu Server and Windows results
-are kept but do not validate this profile. Read [validation](docs/VALIDATION.md) before
-trusting any of it.
+**Validation status:** on 2026-09-19 the Lubuntu profile was installed twice on a real
+KVM host. The second run, `up --foreground` from a cleaned disk, passed in **781 s** and
+is the one that counts: the installer wrote the SDDM drop-in itself, the guest booted
+into the LXQt session automatically, and `desktop-ready` was recorded 14 s later. One
+caveat is recorded rather than rounded off — a client attached to that run's graphical
+console, so by the lab's own rule the run is not *provably* unattended, though nothing
+typed anything. The earlier Ubuntu Server and Windows results are kept but do not
+validate this profile. Read [validation](docs/VALIDATION.md) before trusting any of it.
 
 ## What a finished run looks like
 
 Both images are `work/PROFILE/screenshots/` frames captured through QMP from the real
 guests described in [validation](docs/VALIDATION.md); nothing is staged or mocked up.
-The Lubuntu frame is the installed guest with the SDDM drop-in applied, which a fresh
-installation now writes from the seed.
+The Lubuntu frame is a guest installed unattended from the seed and booted from its own
+disk, with no manual step in between.
 
 ![Lubuntu 26.04 installed, at the LXQt desktop after autologin](docs/images/lubuntu-26.04-installed.png)
 

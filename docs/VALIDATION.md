@@ -118,9 +118,49 @@ the archived `serial-1789821625642098850.log`, recorded
 guided menu moved from step 4 to step 5. Run a second time it refused, naming the verdict already
 there.
 
-So: the profile is validated on a real guest end to end — unattended installation, a graphical
-login reached from a cold boot, autologin, the greeter's keyboard, and a recovered verdict for the
-one run whose record was lost.
+### Lubuntu 26.04, attempt 2 — installed from the seed, end to end
+
+The disk and seed were then cleaned and the whole thing rebuilt with `./lab up lubuntu-26.04
+--foreground`, so that the SDDM drop-in, the greeter keyboard and autologin were written **by the
+installer** rather than applied afterwards. That is the run that validates the profile.
+
+| | |
+|---|---|
+| Installation | `passed (unattended)` in **781.63 s** |
+| Disk | **11,526,733,824 bytes** |
+| `ssh-ready` | passed |
+| `desktop-ready` | passed, 14 s after the installed guest was booted |
+| Verdict in the report | carries a caveat — see below |
+
+The guest was then read back over SSH. `/etc/sddm.conf.d/90-lab.conf` holds the `[Autologin]`
+block and the `DisplayCommand`; `/etc/sddm/lab-xsetup` still carries the
+`# Written by qemu-playground` line, which is what proves these came from `xsetup_script()`
+through the seed and not from the earlier hand-patching. The active session on seat0 reads
+`labuser`, so autologin ran from a cold boot, and `localectl` reports `X11 Layout: it`. The
+screenshot in `docs/images/` is that machine.
+
+**The verdict carries a caveat, and should.** At 15:22:08, while the installer was running,
+something attached to the graphical console, so the report reads:
+
+```
+passed (unattended) - a client connected to the graphical console, so the run is not
+provably unattended - attempt 2; previous outcomes retained below
+```
+
+Nothing typed anything — there is no `intervention` event — but the lab cannot know that, and
+this is exactly the distinction between *exposed* and *used* that the console was given a
+separate event for. The installation is proven; its unattendedness is, by the lab's own rule,
+not proven for this particular run. The recovered verdict from attempt 1 is retained above it in
+the same report.
+
+**Observed and not chased:** this session's desktop labels come up in English although
+`LAB_LOCALE=it_IT.UTF-8` and the greeter, on the earlier guest, appeared in Italian once SDDM had
+been restarted. The system locale and keyboard are correct; only the session's own translation is
+not. Not investigated, and nothing in the lab configures it.
+
+So: the profile is validated on a real guest end to end — an unattended installation that writes
+its own desktop configuration, a graphical session reached automatically from a cold boot, the
+greeter's keyboard, and a recovered verdict for the earlier run whose record was lost.
 
 ### Ubuntu Server 26.04 (superseded profile) — one attempt, passed
 
@@ -209,17 +249,13 @@ failure arrives as evidence.
 - **The interactive tmux layout**: tmux is not installed on this host, so only the fzf fallback
   has been exercised.
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
-- **An installation that applies these settings from the seed.** The SDDM drop-in, the greeter
-  keyboard and autologin were all validated by writing them to a guest that was already
-  installed, and the seed is asserted to write byte-identical files by a unit test. No guest has
-  yet been installed from scratch with them in place, so the late commands that write them, and
-  the token gating on the extended check, are unexercised on real media.
-- **The `desktop-ready` event and the screenshot `up` takes**: the checks they depend on passed
-  by hand against the booted guest, but no `up --foreground` has carried an installation through
-  to them in one piece.
-- **Typing the password at the greeter.** `LAB_AUTOLOGIN=0` was exercised only as far as the
-  check; nobody logged in by hand on the corrected `it` layout.
-- **A verdict recorded live for this profile**: the only one it has was recovered after the fact.
+- **An installation nobody watched.** Attempt 2 was complete and unassisted, but a client
+  attached to its graphical console, so by the lab's own rule its unattendedness is unproven. A
+  run with `LAB_VNC_PORT=0`, or simply one nobody opens, would settle it.
+- **`LAB_AUTOLOGIN=0` on a real installation.** It is covered by unit tests and was exercised
+  against a running guest, but no guest has been installed with it off, and nobody has typed the
+  password at the corrected `it` greeter.
+- **The session's own language**: English labels under an Italian locale, described above.
 - **`apt.fallback: abort` actually aborting**: no run has yet been made with the archive
   unreachable, so the failure path this profile depends on has been read, not exercised.
 - Behaviour on media other than the pinned Ubuntu bootstrap ISO and the imported Italian x64
