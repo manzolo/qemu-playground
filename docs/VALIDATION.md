@@ -71,8 +71,32 @@ when the parent dies is not, and a background command returning zero already mea
 worker was launched. Recovering a verdict from `serial.log` and the QEMU exit after the fact is
 not implemented.
 
-So: the desktop mechanism is validated on a real guest, and the unattended verdict for this
-particular run is not — there is no lab-generated report to show for it.
+**The installed disk was then booted and checked.** `start` brought it up, key-authenticated SSH
+answered within 10 s, and the guest reported:
+
+```
+$ ./lab ssh lubuntu-26.04 -- 'uname -a; lsb_release -ds; systemctl get-default; systemctl is-active display-manager'
+Linux playground 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 04:26:38 UTC 2026 x86_64 GNU/Linux
+Ubuntu 26.04 LTS
+graphical.target
+active
+```
+
+`desktop.lubuntu_check(running=True)` — the exact string `up` sends — exited zero against the
+running guest, and the screenshot in `docs/images/lubuntu-26.04-installed.png` is that machine's
+SDDM greeter offering the `Lubuntu` session for `labuser`. `lsb_release` says `Ubuntu 26.04 LTS`
+because the bootstrap medium is Ubuntu Server; the desktop on top is what the profile adds.
+
+**Observed and not smoothed over: the greeter offers the wrong keyboard.** With `LAB_KEYBOARD=it`
+the installed system is configured correctly — `XKBLAYOUT="it"` in `/etc/default/keyboard` and
+`X11 Layout: it` from `localectl` — but SDDM's greeter shows `Layout: us`, visible in the
+screenshot above. The console password is typed at that greeter, and `-` is not in the same place
+on the two layouts, so the one credential this profile exists to let you use can be mistyped at
+the one screen that needs it. Nothing in the seed configures the greeter's layout. Not fixed.
+
+So: the profile is validated on a real guest end to end, from unattended installation to a
+graphical login reached from a cold boot. What is missing is the lab's own record of it — the
+run has no `installation` event and no report — and the greeter's keyboard.
 
 ### Ubuntu Server 26.04 (superseded profile) — one attempt, passed
 
@@ -161,10 +185,12 @@ failure arrives as evidence.
 - **The interactive tmux layout**: tmux is not installed on this host, so only the fzf fallback
   has been exercised.
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
-- **The installed Lubuntu guest actually booting**: the run above ended at poweroff, so the
-  LXQt login on the graphical console, key-authenticated SSH into the installed system, and the
-  `desktop-ready` event that `up` records are all still unobserved. Only the installer's own
-  in-target check has been seen to pass.
+- **The `desktop-ready` event and the screenshot `up` takes**: the checks they depend on were
+  run by hand against the booted guest and passed, but no `up --foreground` has carried an
+  installation through to them in one piece.
+- **Logging into the LXQt session.** The greeter was reached and photographed; nobody typed the
+  password, and the greeter's keyboard layout is wrong (above), so the session itself — panel,
+  file manager, terminal — is unseen.
 - **A lab-recorded unattended verdict for this profile**: see above — the one real run lost its
   host-side record, so no `installation` event and no report exist for it.
 - **Recovery of a verdict after the installation worker dies**, which the run above showed is a

@@ -13,25 +13,24 @@ Internet access is required to download the desktop packages.
 
 **Validation status:** on 2026-09-19 the Lubuntu profile installed unattended on a
 real KVM host in about 800 s, with the in-target desktop check passing before the
-completion token and a disk 1.85x the size of the Server profile it replaces. That
-run's host-side record was lost when its background worker was killed, so no report
-exists for it and the installed guest has not yet been booted. The earlier Ubuntu
-Server and Windows results are kept but do not validate this profile. Read
-[validation](docs/VALIDATION.md) before trusting any of it.
+completion token, and the installed disk then booted to the SDDM login shown below
+with `display-manager` active. Two things are not green: that run's host-side record
+was lost when its background worker was killed, so it has no `installation` event and
+no report, and SDDM's greeter offers a `us` keyboard although the system is
+configured `it`. The earlier Ubuntu Server and Windows results are kept but do not
+validate this profile. Read [validation](docs/VALIDATION.md) before trusting any of it.
 
 ## What a finished run looks like
 
 Both images are `work/PROFILE/screenshots/` frames from the run described in
 [validation](docs/VALIDATION.md); nothing is staged.
 
-![Ubuntu Server 26.04 installed, at the console login prompt](docs/images/ubuntu-26.04-installed.png)
+![Lubuntu 26.04 installed, at the SDDM graphical login](docs/images/lubuntu-26.04-installed.png)
 
-*The predecessor `ubuntu-26.04` profile after its unattended installation: the server console at
-its text login prompt. It is kept as the honest picture of what that profile produced, and as the
-reason the Lubuntu profile exists. No LXQt frame is shown yet: the Lubuntu profile has installed
-on a real guest, but that run ended at poweroff and the installed system has not been booted —
-see [validation](docs/VALIDATION.md). The lab never logs in at the console; it connects over SSH
-with a dedicated key.*
+*Lubuntu 26.04 after the unattended installation, booted from its own disk: SDDM offering the
+`Lubuntu` session for `labuser`. Sign in with the console password from `.env`. The lab never logs
+in here — it connects over SSH with a dedicated key. The predecessor `ubuntu-26.04` profile
+produced a text console at this point, which is why this one exists.*
 
 ![Windows 11 desktop during the successful attempt](docs/images/windows-11-installed.png)
 
