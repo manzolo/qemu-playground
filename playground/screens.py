@@ -41,6 +41,19 @@ def png(width, height, pixels):
             chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 
 
+def capture(lab, raw):
+    """Capture without retaining evidence or sending guest input."""
+    try:
+        qmp(lab, 'screendump', {'filename': str(raw)})
+        width, height, pixels = ppm(raw.read_bytes())
+    finally:
+        raw.unlink(missing_ok=True)
+    if max(pixels, default=0) <= 8:
+        content = lab.redact(tail(lab.serial) or '[Black framebuffer; serial log is empty]')
+        return content.encode(), '.txt'
+    return png(width, height, pixels), '.png'
+
+
 def shot(lab, *, open_image=False, nudge=False, caption='Manual screenshot', dedupe=False):
     lab.ensure()
     folder = lab.safe('work', lab.vm, 'screenshots')
@@ -51,17 +64,9 @@ def shot(lab, *, open_image=False, nudge=False, caption='Manual screenshot', ded
         qmp(lab, 'send-key', {'keys': [{'type': 'qcode', 'data': 'ret'}]})
     stamp = str(time.time_ns())
     raw = folder / (stamp + '.ppm')
-    qmp(lab, 'screendump', {'filename': str(raw)})
-    try:
-        width, height, pixels = ppm(raw.read_bytes())
-    finally:
-        raw.unlink(missing_ok=True)
-    if max(pixels, default=0) <= 8:
-        content = lab.redact(tail(lab.serial) or '[Black framebuffer; serial log is empty]')
-        payload, suffix = content.encode(), '.txt'
+    payload, suffix = capture(lab, raw)
+    if suffix == '.txt':
         caption += ' — black framebuffer; serial log tail'
-    else:
-        payload, suffix = png(width, height, pixels), '.png'
     digest = hashlib.sha256(payload).hexdigest()
     timeline = folder / 'timeline.jsonl'
     previous = records(timeline)

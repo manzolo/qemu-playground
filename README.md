@@ -75,6 +75,7 @@ See [configuration](docs/CONFIGURATION.md) for passwords, language and console a
 ```bash
 ./lab ssh lubuntu-26.04 -- 'uname -a'
 ./lab shot lubuntu-26.04             # capture and open a passive screenshot
+./lab shot windows-11 --follow      # live screenshots in one tab, every 2 seconds
 ./lab view lubuntu-26.04             # open the graphical console
 ./lab report lubuntu-26.04 --open    # inspect the HTML report
 ./lab stop lubuntu-26.04

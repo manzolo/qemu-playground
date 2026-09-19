@@ -15,6 +15,7 @@ from .interface import menu_command, menu_items, menu_row, status
 from .protocol import agent
 from .report import report
 from .screens import shot
+from .follow import follow
 from .desktop import lubuntu_check
 from .windows import windows_check_command
 from .wizard import PAGES, screen, words_for
@@ -60,7 +61,10 @@ def parser():
     c.add_argument('--timeout', type=int, default=300)
     c = command('shot', vm=True)
     c.add_argument('--no-open', action='store_true')
-    c.add_argument('--nudge', action='store_true')
+    mode = c.add_mutually_exclusive_group()
+    mode.add_argument('--nudge', action='store_true')
+    mode.add_argument('--follow', action='store_true', help='Open a passive live viewer; Ctrl-C returns')
+    c.add_argument('--interval', type=float, default=2, help='Seconds between follow frames (default: 2)')
     c = command('report', vm=True)
     c.add_argument('--pdf', action='store_true')
     c.add_argument('--open', action='store_true', dest='open_after',
@@ -126,7 +130,9 @@ def dispatch(lab, args):
             else:
                 print(json.dumps(result, indent=2))
     elif action == 'shot':
-        if dry:
+        if args.follow:
+            follow(lab, interval=args.interval, open_browser=not args.no_open, dry=dry)
+        elif dry:
             print(f'QMP screendump via {lab.qmp}; convert PPM -> PNG; open={not args.no_open}; nudge={args.nudge}')
         else:
             shot(lab, open_image=not args.no_open, nudge=args.nudge)

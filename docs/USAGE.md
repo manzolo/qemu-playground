@@ -101,6 +101,16 @@ the wording of one that was watched.
 
 ## Evidence and reports
 
+To watch installation, choose **Use the VM → Follow screenshots (every 2 seconds)**
+or run `./lab shot windows-11 --follow` (also available for Lubuntu). One browser
+tab updates every two seconds, without sending guest input or retaining extra
+frames on disk. Black frames show the serial log tail. Use `--interval 5` to
+change the cadence, or `--no-open` to print the local viewer URL without opening
+the browser. The terminal stays occupied until `Ctrl-C`, which ends the viewer
+without stopping the VM or installer. The tab retains its last frame when the VM
+stops or the viewer ends. Closing the tab stops requesting screenshots; use
+`Ctrl-C` in the terminal to return to the menu. `--follow` cannot use `--nudge`.
+
 Runtime files live under `work/PROFILE/`: `steps.log`, `serial.log`, `qemu.log`,
 `qemu-command.txt`, `events.jsonl`, the disk, seed and screenshots. Earlier serial
 logs are preserved under `logs/`. QMP operations share a bounded file lock; they

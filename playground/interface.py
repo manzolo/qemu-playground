@@ -50,7 +50,7 @@ TEXT = {
         no_attempt='no installation attempt to recover',
         settled='this attempt already has a verdict',
         status='Lab status', console='Serial console (read-only)',
-        shot='Screenshot and open', view='Open the graphical console',
+        shot='Screenshot and open', follow='Follow screenshots (every 2 seconds)', view='Open the graphical console',
         shell='Open an SSH session',
         ssh='Run a demo SSH command',
         agent='Guest agent: ping', html='Generate and open the HTML report',
@@ -83,7 +83,7 @@ TEXT = {
         no_attempt='nessun tentativo di installazione da recuperare',
         settled='questo tentativo ha già un esito',
         status='Stato del laboratorio', console='Console seriale (sola lettura)',
-        shot='Screenshot e apertura', view='Apri la console grafica',
+        shot='Screenshot e apertura', follow='Segui screenshot (ogni 2 secondi)', view='Apri la console grafica',
         shell='Apri una sessione SSH',
         ssh='Esegui un comando SSH dimostrativo',
         agent='Guest agent: ping', html='Genera e apri il report HTML',
@@ -197,6 +197,7 @@ def menu_items(lab):
     add(t['console'], ['console', v], t['win_console'] if windows
         else ('' if lab.serial.exists() else t['no_serial']))
     add(t['shot'], ['shot', v], '' if running else t['vm_off'])
+    add(t['follow'], ['shot', v, '--follow'], '' if running else t['vm_off'])
     add(t['view'], ['view', v], (t['no_vnc'] if not lab.vnc else '') or ('' if running else t['vm_off']))
     add(t['shell'], ['ssh', v], '' if reachable else t['no_ssh'])
     add(t['ssh'], ['ssh', v, '--', 'ver' if windows else 'uname -a'],

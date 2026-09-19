@@ -23,6 +23,7 @@ Run commands from the repository directory with `./lab`. Replace `VM` with
 | `agent VM ping\|info\|osinfo\|ip\|shutdown` | QGA without guest networking |
 | `console VM [--timeout 300]` | Read-only Linux serial log |
 | `shot VM [--no-open] [--nudge]` | Diagnostic capture; only explicit nudge sends Enter |
+| `shot VM --follow [--interval 2] [--no-open]` | Passive live screenshots in one browser tab; Ctrl-C ends the viewer |
 | `report VM [--pdf] [--open]` | Self-contained HTML and optional equivalent PDF; `--open` hands it to the desktop viewer |
 | `clean VM TARGET... [--dry-run] [--yes]` | Enumerate and remove only selected paths |
 
