@@ -7,6 +7,7 @@ from pathlib import Path
 from .core import LabError, atomic, run
 from .desktop import (AUTOSTART, SDDM_CONF, SESSION_CONF, XSETUP, lubuntu_check,
                       noblank_desktop, sddm_conf, session_conf, xsetup_script)
+from .windows import QGA_EXE, UNATTEND, WINLOGON, windows_check
 
 
 def lubuntu_seed(cfg, public_key, password_hash, token):
@@ -155,7 +156,11 @@ def windows_seed(cfg, public_key, token, template):
     child(first, 'CommandLine', logon)
     script = (template.replace('@PUBLIC_KEY_B64@', base64.b64encode(public_key.strip().encode()).decode())
               .replace('@TOKEN@', token)
-              .replace('@QGA_SHA256@', cfg['LAB_QGA_SHA256'].strip().lower()))
+              .replace('@QGA_SHA256@', cfg['LAB_QGA_SHA256'].strip().lower())
+              .replace('@QGA_EXE@', QGA_EXE)
+              .replace('@WINLOGON@', WINLOGON)
+              .replace('@UNATTEND_PATHS@', ', '.join("'" + path + "'" for path in UNATTEND))
+              .replace('@WINDOWS_CHECK@', windows_check(cfg)))
     return ET.tostring(root, encoding='unicode', xml_declaration=True), script
 
 

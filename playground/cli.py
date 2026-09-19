@@ -16,6 +16,7 @@ from .protocol import agent
 from .report import report
 from .screens import shot
 from .desktop import lubuntu_check
+from .windows import windows_check_command
 from .wizard import PAGES, screen, words_for
 
 
@@ -158,27 +159,59 @@ def dispatch(lab, args):
         if not dry:
             print('Waiting up to 300s for key-authenticated SSH and guest readiness.', flush=True)
             deadline = time.monotonic() + 300
-            cmd = ops.ssh_command(lab, ['ver' if lab.vm == 'windows-11' else lubuntu_check(lab.cfg, running=True)])
+            windows = lab.vm == 'windows-11'
+            cmd = ops.ssh_command(lab, [windows_check_command(lab.cfg) if windows
+                                       else lubuntu_check(lab.cfg, running=True)])
+            ssh_recorded = False
+            last_error = 'No guest check completed'
             while time.monotonic() < deadline:
                 if not lab.pid():
                     raise LabError('Guest exited while waiting for SSH; inspect qemu.log and last screen')
                 try:
-                    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+                    result = subprocess.run(cmd, capture_output=True, text=True, errors='replace',
+                                            timeout=max(.01, min(20, deadline - time.monotonic())))
                     ready = result.returncode == 0
+                    if not ready:
+                        diagnostic = (result.stderr or result.stdout or '').strip()[-2000:]
+                        last_error = f'SSH guest check exited {result.returncode}: {diagnostic}'
                 except subprocess.TimeoutExpired:
                     ready = False
+                    last_error = 'SSH guest check timed out'
+                if time.monotonic() >= deadline:
+                    if ready:
+                        last_error = 'SSH guest check completed after the readiness deadline'
+                    break
                 if ready:
-                    lab.event(kind='ssh-ready', outcome='passed')
-                    if lab.vm == 'lubuntu-26.04':
+                    if not ssh_recorded:
+                        lab.event(kind='ssh-ready', outcome='passed')
+                        ssh_recorded = True
+                    if windows:
+                        try:
+                            # Running in SCM is not proof that COM2 answers. Reuse
+                            # the synchronized protocol, including its reply wait.
+                            agent(lab, 'ping')
+                        except (LabError, OSError) as e:
+                            ready = False
+                            last_error = f'QGA guest-ping failed: {e}'
+                        if time.monotonic() >= deadline:
+                            if ready:
+                                last_error = 'QGA guest-ping completed after the readiness deadline'
+                            break
+                if ready:
+                    if windows:
+                        lab.event(kind='agent-ready', outcome='passed',
+                                  detail='Windows postconditions passed over SSH; synchronized QGA guest-ping replied')
+                        shot(lab, caption='Installed Windows: bootstrap postconditions and guest agent ready')
+                    else:
                         lab.event(kind='desktop-ready', outcome='passed', detail='Lubuntu LXQt installed; SDDM active; graphical.target')
                         shot(lab, caption='Installed Lubuntu: graphical login ready')
                     report(lab)
-                    break
-                time.sleep(3)
-            else:
-                shot(lab, caption='Timeout waiting for SSH and guest readiness')
-                report(lab)
-                raise LabError('Timeout after 300s waiting for SSH and guest readiness; VM retained')
+                    return 0
+                time.sleep(max(0, min(3, deadline - time.monotonic())))
+            lab.event(kind='guest-readiness', outcome='failed', detail=last_error)
+            shot(lab, caption='Timeout waiting for SSH and guest readiness')
+            report(lab)
+            raise LabError(f'Timeout after 300s waiting for SSH and guest readiness; {last_error}; VM retained')
     return 0
 
 

@@ -54,7 +54,8 @@ try {
     # OpenSSH-Server-In-TCP may be missing, disabled, or scoped to a profile the
     # QEMU user network is not classified in, which shows up as an SSH connection
     # that hangs during banner exchange rather than as a refusal.
-    if (!(Get-NetFirewallRule -Name 'qemu-playground-sshd' -ErrorAction SilentlyContinue)) {
+    # Enumerating distinguishes an absent rule from a failed query.
+    if (!(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object Name -eq 'qemu-playground-sshd')) {
         New-NetFirewallRule -Name 'qemu-playground-sshd' -DisplayName 'OpenSSH Server (qemu-playground)' `
             -Enabled True -Profile Any -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow | Out-Null
     }
@@ -72,10 +73,12 @@ try {
     $install = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$base\qga-install.log`"" -PassThru
     if (!$install.WaitForExit(600000)) { throw 'Timeout waiting for QGA MSI installer (600s)' }
     if ($install.ExitCode -notin @(0,3010)) { throw "QGA MSI exit $($install.ExitCode)" }
-    $exe = 'C:\Program Files\qemu-ga\qemu-ga.exe'
-    if (!(Test-Path $exe)) { throw 'qemu-ga.exe not found after MSI installation' }
-    if (!(Get-Service QEMU-GA -ErrorAction SilentlyContinue)) { throw 'the MSI did not register the QEMU-GA service' }
-    Stop-Service QEMU-GA -Force -ErrorAction SilentlyContinue
+    $exe = '@QGA_EXE@'
+    # Diagnose incomplete MSI output before service reconfiguration can obscure it.
+    # A CIM query returns no object for an absent service; query errors still throw.
+    if (!(Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'qemu-ga.exe not found after MSI installation' }
+    if (!(Get-CimInstance Win32_Service -Filter "Name='QEMU-GA'")) { throw 'the MSI did not register the QEMU-GA service' }
+    Stop-Service QEMU-GA -Force -ErrorAction Stop
     # ImagePath is written directly instead of `sc.exe config binPath= "<quoted> args"`:
     # Windows PowerShell rebuilds native command lines and mangles the embedded quotes
     # around a path with spaces, so sc.exe rejected it (2026-09-16).
@@ -83,16 +86,20 @@ try {
     Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\QEMU-GA' -Name ImagePath -Value $wanted
     Set-Service QEMU-GA -StartupType Automatic
     Start-Service QEMU-GA
-    if ((Get-Service QEMU-GA).Status -ne 'Running') { throw 'QEMU-GA did not start after reconfiguration' }
-    Emit ('QEMU-GA running on COM2; sshd is ' + (Get-Service sshd).Status +
-          '; firewall rules for port 22: ' + ((Get-NetFirewallRule -Direction Inbound -Enabled True |
-          Where-Object { ($_ | Get-NetFirewallPortFilter).LocalPort -eq 22 }).Name -join ','))
     # Remove autologon credentials, including the cached answer files.
-    $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    $winlogon = '@WINLOGON@'
     Set-ItemProperty $winlogon AutoAdminLogon '0'
-    Remove-ItemProperty $winlogon DefaultPassword -ErrorAction SilentlyContinue
-    Remove-Item 'C:\Windows\Panther\unattend.xml' -ErrorAction SilentlyContinue
-    Remove-Item 'C:\Windows\Panther\Unattend\unattend.xml' -ErrorAction SilentlyContinue
+    if ((Get-Item -LiteralPath $winlogon).GetValueNames() -contains 'DefaultPassword') {
+        Remove-ItemProperty $winlogon DefaultPassword -ErrorAction Stop
+    }
+    foreach ($path in @UNATTEND_PATHS@) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -ErrorAction Stop }
+    }
+    # Generated from the same definition the host executes after the cold boot.
+    & {
+@WINDOWS_CHECK@
+    }
+    Emit 'Windows bootstrap postconditions passed; host agent channel not yet tested'
     Stop-Transcript
     # Flush filesystem and storage cache BEFORE emitting completion. Never freeze
     # volumes via QGA just to implement a completion marker.

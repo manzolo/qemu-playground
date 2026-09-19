@@ -457,6 +457,179 @@ class LabCase(unittest.TestCase):
         self.assertEqual([e['kind'] for e in events], ['ssh-ready', 'desktop-ready'])
         capture.assert_called_once()
 
+    def test_windows_seed_and_host_share_the_postconditions_before_completion(self):
+        import base64
+        from playground.windows import windows_check, windows_check_command
+        cfg = dict(DEFAULTS, LAB_PASSWORD='fixture')
+        template = (self.root / 'templates/windows-setup.ps1').read_text()
+        _, script = windows_seed(cfg, 'ssh-ed25519 TEST_ONLY', 'tok', template)
+        check = windows_check(cfg)
+        self.assertEqual(windows_check(cfg, running=True), check)
+        self.assertEqual(script.count(check), 1)
+        # The final check cannot explain an incomplete MSI if Start-Service fails
+        # first. Keep those diagnostics before any service reconfiguration.
+        for diagnostic in ('qemu-ga.exe not found after MSI installation',
+                           'the MSI did not register the QEMU-GA service'):
+            self.assertIn("throw '" + diagnostic + "'", script)
+            self.assertLess(script.index('if ($install.ExitCode'), script.index(diagnostic))
+            for operation in ('Stop-Service QEMU-GA', '-Name ImagePath', 'Start-Service QEMU-GA'):
+                self.assertLess(script.index(diagnostic), script.index(operation))
+        self.assertLess(script.index('Remove-ItemProperty'), script.index(check))
+        self.assertLess(script.index('Remove-Item -LiteralPath'), script.index(check))
+        self.assertLess(script.index(check), script.index('Write-VolumeCache'))
+        self.assertLess(script.index('Write-VolumeCache'), script.index("Emit 'LAB_OK_tok'"))
+        self.assertIn("Emit 'LAB_FAIL_tok'", script)
+        self.assertNotIn('SilentlyContinue', script[:script.rindex('} catch {')])
+        self.assertNotIn('@WINDOWS_CHECK@', script)
+        self.assertNotIn('@UNATTEND_PATHS@', script)
+        remote = ssh_command(Lab(self.root, 'windows-11'), [windows_check_command(cfg)])[-1]
+        self.assertLess(len(remote), 8191)  # cmd.exe's limit, including the wrapper
+        encoded = remote.split('-EncodedCommand ', 1)[1].rstrip('"')
+        decoded = base64.b64decode(encoded, validate=True).decode('utf-16le')
+        self.assertIn('try {\n' + check + '\n} catch {', decoded)
+        self.assertIn('[Console]::Error.WriteLine($_.Exception.Message)', decoded)
+        self.assertIn('exit 1\n}', decoded)
+        self.assertTrue(decoded.endswith('exit 0\n'))
+
+    def test_windows_check_requires_live_services_and_effective_firewall_policy(self):
+        from playground.windows import QGA_EXE, UNATTEND, windows_check
+        check = windows_check(DEFAULTS)
+        for condition in ("'sshd', 'QEMU-GA'", 'Get-CimInstance Win32_Service',
+                          "$service.Count -ne 1", ".State -ne 'Running'",
+                          ".StartMode -ne 'Auto'", "-PolicyStore ActiveStore",
+                          "-Name 'qemu-playground-sshd'", "$rule.Count -ne 1",
+                          ".Enabled -ne 'True'", ".Direction -ne 'Inbound'",
+                          ".Action -ne 'Allow'", ".Profile -ne 'Any'",
+                          'Get-NetFirewallPortFilter', "@('TCP', '6')",
+                          ".LocalPort -ne '22'", f"'{QGA_EXE}' -PathType Leaf",
+                          "$names -contains 'AutoAdminLogon'", ".GetValue('AutoAdminLogon') -ne '0'",
+                          "$names -contains 'DefaultPassword'", 'Test-Path -LiteralPath $path'):
+            self.assertIn(condition, check)
+        for path in UNATTEND:
+            self.assertIn(path, check)
+        self.assertIn("$ErrorActionPreference = 'Stop'", check)
+        for forbidden in ('SilentlyContinue', '||', 'Start-Service', 'Set-Service',
+                          'Remove-Item', 'Set-ItemProperty', 'Start-Sleep', 'exit 0'):
+            self.assertNotIn(forbidden, check)
+
+    @contextlib.contextmanager
+    def _windows_up(self):
+        """A fake clock and fake guest; real events and retained evidence in /tmp."""
+        from argparse import Namespace
+        from subprocess import CompletedProcess
+        from types import SimpleNamespace
+        from playground.cli import dispatch
+        from playground.core import ACTIVE_LAB
+        lab = Lab(self.root, 'windows-11')
+        lab.ensure()
+        lab.disk.write_bytes(b'disk evidence')
+        lab.seed.write_bytes(b'seed evidence')
+        atomic(lab.work / 'events.jsonl', '')
+        now = [0.0]
+        def sleep(seconds):
+            now[0] += seconds
+        context = ACTIVE_LAB.set(None)
+        try:
+            with contextlib.ExitStack() as stack:
+                for name in ('config', 'iso', 'prepare', 'install', 'start'):
+                    stack.enter_context(patch('playground.cli.ops.' + name))
+                stack.enter_context(patch('playground.cli.ops.doctor', return_value=0))
+                pid = stack.enter_context(patch.object(Lab, 'pid', return_value=123))
+                stack.enter_context(patch('playground.cli.time.monotonic', side_effect=lambda: now[0]))
+                wait = stack.enter_context(patch('playground.cli.time.sleep', side_effect=sleep))
+                capture = stack.enter_context(patch('playground.cli.shot'))
+                render = stack.enter_context(patch('playground.cli.report'))
+                proc = stack.enter_context(patch('playground.cli.subprocess.run',
+                    return_value=CompletedProcess([], 0, '', '')))
+                ping = stack.enter_context(patch('playground.cli.agent', return_value={}))
+                yield SimpleNamespace(lab=lab, now=now, proc=proc, ping=ping, pid=pid,
+                    capture=capture, render=render, wait=wait,
+                    run=lambda: dispatch(lab, Namespace(action='up', dry_run=False, nudge=False)))
+        finally:
+            ACTIVE_LAB.reset(context)
+
+    def test_windows_up_rechecks_postconditions_and_waits_for_agent_reply(self):
+        from subprocess import CompletedProcess
+        from playground.windows import windows_check_command
+        with self._windows_up() as guest:
+            guest.proc.side_effect = [CompletedProcess([], 1, '', 'sshd must be Running'),
+                                     CompletedProcess([], 0, '', ''),
+                                     CompletedProcess([], 1, '', 'DefaultPassword still exists'),
+                                     CompletedProcess([], 0, '', '')]
+            def reply(lab, command):
+                kinds = [e['kind'] for e in records(lab.work / 'events.jsonl')]
+                self.assertEqual(kinds, ['ssh-ready'])
+                guest.capture.assert_not_called()
+                guest.render.assert_not_called()
+                if guest.ping.call_count == 1:
+                    raise LabError('No reply on COM2')
+                return {}  # guest-ping succeeds with an empty object, not a truthy value
+            guest.ping.side_effect = reply
+            self.assertEqual(guest.run(), 0)
+            self.assertEqual(guest.proc.call_count, 4)
+            self.assertEqual(guest.ping.call_count, 2)
+            target, command = guest.ping.call_args.args
+            self.assertEqual((target.root, target.vm, command), (guest.lab.root, 'windows-11', 'ping'))
+            self.assertIn(windows_check_command(guest.lab.cfg), guest.proc.call_args.args[0][-1])
+            self.assertEqual([e['kind'] for e in records(guest.lab.work / 'events.jsonl')],
+                             ['ssh-ready', 'agent-ready'])
+            guest.capture.assert_called_once()
+            guest.render.assert_called_once()
+
+    def test_windows_up_never_accepts_ssh_without_the_agent(self):
+        for error in (LabError('No reply on COM2'), OSError('QGA socket unavailable')):
+            with self.subTest(error=str(error)), self._windows_up() as guest:
+                guest.ping.side_effect = error
+                with self.assertRaisesRegex(LabError, 'QGA guest-ping failed: .*VM retained'):
+                    guest.run()
+                events = records(guest.lab.work / 'events.jsonl')
+                self.assertEqual([e['kind'] for e in events], ['ssh-ready', 'guest-readiness'])
+                self.assertEqual(events[-1]['outcome'], 'failed')
+                self.assertIn(str(error), events[-1]['detail'])
+                self.assertEqual(guest.lab.disk.read_bytes(), b'disk evidence')
+                self.assertEqual(guest.lab.seed.read_bytes(), b'seed evidence')
+                guest.capture.assert_called_once()
+                guest.render.assert_called_once()
+
+    def test_windows_up_keeps_the_failed_condition_and_does_not_probe_agent(self):
+        from subprocess import CompletedProcess, TimeoutExpired
+        for result, diagnostic in ((CompletedProcess([], 1, '', 'Cached answer file still exists'),
+                                    'Cached answer file still exists'),
+                                   (TimeoutExpired('ssh', 20), 'SSH guest check timed out')):
+            with self.subTest(diagnostic=diagnostic), self._windows_up() as guest:
+                if isinstance(result, Exception):
+                    guest.proc.side_effect = result
+                else:
+                    guest.proc.return_value = result
+                with self.assertRaisesRegex(LabError, diagnostic):
+                    guest.run()
+                guest.ping.assert_not_called()
+                events = records(guest.lab.work / 'events.jsonl')
+                self.assertEqual([e['kind'] for e in events], ['guest-readiness'])
+                self.assertIn(diagnostic, events[0]['detail'])
+                self.assertEqual(guest.lab.disk.read_bytes(), b'disk evidence')
+                guest.capture.assert_called_once()
+                guest.render.assert_called_once()
+
+    def test_windows_up_rejects_a_reply_after_the_readiness_deadline(self):
+        with self._windows_up() as guest:
+            def late_reply(*args):
+                guest.now[0] = 301
+                return {}
+            guest.ping.side_effect = late_reply
+            with self.assertRaisesRegex(LabError, 'Timeout after 300s'):
+                guest.run()
+            self.assertNotIn('agent-ready', [e['kind'] for e in records(guest.lab.work / 'events.jsonl')])
+
+    def test_windows_up_stops_polling_when_the_guest_exits(self):
+        with self._windows_up() as guest:
+            guest.ping.side_effect = LabError('No reply on COM2')
+            guest.pid.side_effect = [123, None]
+            with self.assertRaisesRegex(LabError, 'Guest exited'):
+                guest.run()
+            guest.proc.assert_called_once()
+            self.assertNotIn('agent-ready', [e['kind'] for e in records(guest.lab.work / 'events.jsonl')])
+
     def test_sddm_drop_in_carries_the_greeter_keyboard_and_optional_autologin(self):
         """SDDM does not read /etc/default/keyboard, so the greeter needs telling."""
         import base64

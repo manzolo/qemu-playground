@@ -6,7 +6,7 @@ real guest the same day — with a caveat about the host-side record, below.
 
 ## Automated suite
 
-- Standard-library unit/contract suite: **69 tests passed**; configuration and dry-run isolation,
+- Standard-library unit/contract suite: **76 tests passed**; configuration and dry-run isolation,
   vendor hash checking and cache invalidation, XML/JSON seeds, SSH isolation and exit status,
   process identity, selective cleanup and symlink refusal, locks, QMP framing/timeouts,
   token-before-exit handling, failure evidence, passive screenshots, PNG encoding, explicit
@@ -15,7 +15,9 @@ real guest the same day — with a caveat about the host-side record, below.
   recommendation for each lab state, the SDDM drop-in and greeter keyboard, autologin
   being configurable and checked only when on, and verdict recovery from an archived
   serial log including the three states where it refuses to guess, and a verdict being
-  qualified only by its own attempt's console and intervention events.
+  qualified only by its own attempt's console and intervention events. Seven additional
+  Windows tests cover the shared bootstrap/host check and post-boot readiness failures;
+  their limits are recorded below.
 - **3 real-tool smoke tests passed**, including Lubuntu preparation from a tiny synthetic ISO
   (kernel extraction, real qcow2 creation, SSH key generation and readable NoCloud seed).
   Real QEMU 10.2.1 TCG smoke tests for **both** VM command lines: firmware starts, process
@@ -32,6 +34,45 @@ a developer's VM or install an operating system. CI on ordinary Linux runners ru
 without QEMU.
 
 ## Real guests
+
+### Windows shared readiness check, 2026-09-19 — implementation tested, installation pending
+
+The earlier Windows runs below predate this change. Their successful `ver` and manual agent
+queries do **not** validate the new bootstrap or the new `up` path.
+
+**Proved by automated tests, with the following limits:**
+
+- **76 unit/contract tests passed on Python 3.14.4.** The new tests render a synthetic Windows
+  seed, find the exact shared check after cleanup and before flush/token, decode the host's
+  UTF-16LE Base64 command back to that check, and inspect explicit exit statements and the
+  cmd.exe command-length limit. The seed test also verifies that the restored missing-executable
+  and missing-service diagnostics precede Stop-Service, ImagePath changes and Start-Service.
+  These are assertions about generated text; they do not execute PowerShell or observe its
+  actual process exit codes on Windows.
+- With mocked SSH and QGA and a simulated clock, `up` retries a failing check, rechecks after
+  an agent failure, and records `agent-ready` only after both pass. SSH success with a missing
+  socket or a QGA error expires without `agent-ready`. Failed guest checks and SSH timeouts
+  retain their diagnostic; a late agent reply is rejected and a stopped guest ends polling.
+  Timeout tests inspect actual temporary event logs and retained fixture disk/seed files.
+- Bash syntax, ShellCheck, and dry runs of `up` for both profiles and Windows `install` passed.
+  The first unit-suite run inside the development sandbox was blocked by socket permissions;
+  the successful suite ran outside that sandbox. These are isolated tests, not guest repairs.
+- **3 real-tool smoke tests passed again**, using temporary disks, firmware-only QEMU/TCG
+  boots for both profiles and a synthetic Lubuntu seed. They install no OS and exercise
+  neither Windows PowerShell nor the Windows QGA service.
+
+**Not proved on a real guest:** execution or parsing by Windows PowerShell (no PowerShell executable is
+installed on this Linux host), the new bootstrap reaching its token, a cold-booted Windows
+guest passing the shared check, or a real `agent-ready` event from the new `up` path. Individual
+negative PowerShell conditions have not been falsified on a real guest. No configuration was
+applied manually to an existing guest and no Windows installation was launched for this change.
+
+Acceptance still requires explicit authorization for a real installation from a clean disk.
+Use `./lab clean windows-11 disk seed`, preserving prior logs/events and leaving `iso/` alone,
+then `./lab up windows-11 --foreground`. Record the new attempt's bootstrap token and spontaneous
+QEMU exit, then the subsequent cold boot, shared check and host QGA reply. Do not repair the guest
+between installation and measurement. Record any console exposure/client events with their
+proper caveat; a screenshot, a service restart or tests using mocks cannot substitute for this run.
 
 ### Lubuntu 26.04 — installed in the guest, unrecorded on the host
 
@@ -357,6 +398,12 @@ failure arrives as evidence.
 
 ## Still not validated
 
+- **The shared Windows bootstrap/host readiness check on a fresh installation and cold boot.**
+  No real Windows installation has been performed since this code was introduced. No
+  `agent-ready` event from this code comes from a real guest; the observed events are test
+  fixtures using mocked SSH and QGA. The tests do not establish that the installer produces
+  these conditions, that Windows PowerShell executes the generated check as intended, or
+  that the 300-second readiness window is adequate for a real installation's subsequent boot.
 - **Graceful shutdown of an installed Windows guest**: the only measurement so far is the 220 s
   timeout above, taken on a VM left over from a failed installation — not a representative one.
 - **Timeout recovery from a genuinely stalled installer.** The three failures above were
