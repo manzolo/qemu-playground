@@ -226,12 +226,26 @@ The installation time is 1,092 s against 750 s for attempt 3, on the same host w
 media. Archive throughput is the obvious suspect and was not measured, so treat the figure as a
 range rather than a benchmark.
 
-**Observed and not fixed: the desktop blanks, and the passive timeline goes blind with it.**
-Sixteen minutes after the session started, `shot` returned a black framebuffer and the lab did
-what it is built to do — stored the serial log tail instead, captioned as such. Screenshots are
-the lab's main way of watching a guest it refuses to type into, and an idle desktop stops being
-watchable. The same problem was solved for Windows on 2026-09-16 by disabling the guest's
-monitor timeouts in the bootstrap; nothing equivalent exists for this profile.
+**The desktop blanked, and that is now fixed too.** Sixteen minutes after the session started,
+`shot` returned a black framebuffer and the lab did what it is built to do — stored the serial
+log tail instead, captioned as such. `xset -q` against the live session named the cause exactly:
+
+```
+Screen Saver:  timeout: 600   prefer blanking: yes
+DPMS: Standby 600  Suspend 600  Off 600 ... DPMS is Enabled ... Monitor is Off
+```
+
+Screenshots are how this lab watches a guest it refuses to type into, so an idle desktop stops
+being observable, and waking it with a keystroke would mark an otherwise unattended run assisted.
+The seed now writes `/etc/xdg/autostart/qemu-playground-noblank.desktop`, which runs
+`xset s off -dpms` at session start. Verified the way the locale fix should have been the first
+time: the entry was written, the **VM** stopped and started, and the freshly booted session came
+up with `timeout: 0` and `DPMS is Disabled` without anything else being done to it. Falsified too
+— `xset +dpms` on the running session turns the check red, so it is not passing vacuously. The
+running check reads the X server through the session's own `DISPLAY` and `XAUTHORITY`, not the
+file, for the same reason the locale check reads `/proc/<pid>/environ`.
+
+The check is 18 conditions now, all of them passing on a cold-booted guest.
 
 So: the profile is validated on a real guest end to end — an unattended installation, proven
 unattended, that writes its own desktop configuration, and a graphical session reached
@@ -329,8 +343,9 @@ failure arrives as evidence.
   password at the corrected `it` greeter.
 - **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
   and whether that is worth correcting at the source rather than worked around in the session.
-- **LXQt's screen blanking**, which takes the passive timeline with it after about a quarter of
-  an hour idle, and which the Windows profile already guards against.
+- **An installation that writes the autostart entry from the seed.** The mechanism is proven
+  across a cold boot and a unit test asserts the seed produces the file byte for byte, but the
+  guest that has it received it by hand.
 - **Why attempt 5 took 1,092 s against attempt 3's 750 s** on the same host and media.
 - **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
   turning the console off entirely, which is not what most runs will do.

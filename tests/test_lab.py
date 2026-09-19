@@ -533,6 +533,27 @@ class LabCase(unittest.TestCase):
         # It follows LAB_LOCALE rather than being pinned to one language.
         self.assertIn('LANG=fr_FR.UTF-8', session_conf(dict(cfg, LAB_LOCALE='fr_FR.UTF-8')))
 
+    def test_the_screen_stays_watchable_because_screenshots_are_the_only_view(self):
+        """X blanked after ten minutes and shot came back with a black framebuffer."""
+        import base64
+        from playground.desktop import AUTOSTART, NOBLANK, lubuntu_check, noblank_desktop
+        cfg = dict(DEFAULTS, LAB_PASSWORD='fixture')
+        steps = [c[-1] for c in json.loads(
+            lubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']['late-commands']]
+        written = next(s for s in steps if AUTOSTART in s and 'base64 -d' in s)
+        blob = written.split('echo ', 1)[1].split(' |', 1)[0]
+        self.assertEqual(base64.b64decode(blob).decode(), noblank_desktop())
+        self.assertIn(NOBLANK, noblank_desktop())
+        check = lubuntu_check(cfg, running=True)
+        self.assertIn(f'grep -q "{NOBLANK}" {AUTOSTART}', check)
+        # A missing xset would blank the screen in silence, like a missing setxkbmap
+        # would quietly leave the greeter on another layout.
+        self.assertIn('command -v xset', check)
+        # And the entry existing is not the X server having acted on it: only the X
+        # server can say, so the live check asks it.
+        self.assertIn('xset -q | grep -q "DPMS is Disabled"', check)
+        self.assertNotIn('xset -q', lubuntu_check(cfg))
+
     def test_recover_reads_a_lost_verdict_out_of_an_archived_serial_log(self):
         """QEMU truncates a file: log on every boot, so the token may be archived."""
         self.lab.ensure()

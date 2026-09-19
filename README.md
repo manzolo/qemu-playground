@@ -17,8 +17,9 @@ disk with the graphical console switched off so nothing could attach to it,
 `passed (unattended)` in **1,092 s**, every desktop setting written by the installer
 rather than applied afterwards, and `desktop-ready` recorded 17 s after the guest booted
 into an Italian LXQt session by itself. Two attempts before it failed in ways worth
-reading about. One defect is recorded rather than rounded off: the desktop blanks after
-about a quarter of an hour idle, and the passive screenshot timeline goes blind with it.
+reading about. A defect found afterwards — the desktop blanking after ten
+minutes idle, taking the passive screenshot timeline with it — is fixed and verified
+across a cold boot, but no installation has yet written that last file from the seed.
 The earlier Ubuntu Server and Windows results are kept but do not validate this profile.
 Read [validation](docs/VALIDATION.md) before trusting any of it.
 
@@ -208,7 +209,9 @@ configuration for its own greeter, so the lab writes it a drop-in that applies
 is Italian, and the password is typed at exactly that screen. `LAB_LOCALE` is likewise
 restated in `/etc/xdg/lxqt/session.conf`, which LXQt applies inside the session itself:
 every system-wide locale file loses to systemd's own `LANG=C.UTF-8`, and the desktop
-otherwise comes up in English on an Italian system. The old `LAB_DESKTOP`
+otherwise comes up in English on an Italian system. An autostart entry runs
+`xset s off -dpms`, because X blanks the screen after ten minutes and passive
+screenshots are the only way the lab watches a guest it will not type into. The old `LAB_DESKTOP`
 setting is accepted in existing `.env` files but ignored; it cannot disable Lubuntu's
 desktop. `LAB_AUDIO` names a QEMU audio backend (`pipewire`, `pa`,
 `alsa`...) to give the guest a sound card played through the host's daemon; it is

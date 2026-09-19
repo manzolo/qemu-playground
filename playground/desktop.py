@@ -10,6 +10,8 @@ SDDM_CONF = '/etc/sddm.conf.d/90-lab.conf'
 XSETUP = '/etc/sddm/lab-xsetup'
 SESSION = 'Lubuntu.desktop'
 SESSION_CONF = '/etc/xdg/lxqt/session.conf'
+AUTOSTART = '/etc/xdg/autostart/qemu-playground-noblank.desktop'
+NOBLANK = 'xset s off -dpms'
 
 
 def session_conf(cfg):
@@ -23,6 +25,16 @@ def session_conf(cfg):
     puts systemd's value in the way; the reinstall is what caught it.
     """
     return f'[Environment]\nLANG={cfg["LAB_LOCALE"]}\n'
+
+
+def noblank_desktop():
+    """Passive screenshots are how this lab watches a guest it refuses to type into,
+    and X blanks the screen after ten minutes: `shot` came back with a black
+    framebuffer and the serial tail instead of a desktop. Windows was given the same
+    treatment on 2026-09-16 for the same reason. Waking it with a keystroke would
+    mark an otherwise unattended run assisted, so the fix belongs in the guest."""
+    return ('[Desktop Entry]\nType=Application\nName=qemu-playground: keep the screen watchable\n'
+            f'Exec=sh -c "{NOBLANK}"\nOnlyShowIn=LXQt;\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n')
 
 
 def xsetup_script(cfg):
@@ -48,6 +60,12 @@ def sddm_conf(cfg):
     return '\n'.join(blocks)
 
 
+def environ(cfg):
+    """The session's own environment, which is where several of these settings are
+    either true or merely written down in a file somewhere."""
+    return f'/proc/"$(pgrep -u {cfg["LAB_USER"]} -x lxqt-session | head -1)"/environ'
+
+
 def lubuntu_check(cfg, *, running=False):
     """One definition of "the desktop is there", run as a late command before the
     completion token and again over SSH against the booted guest."""
@@ -64,6 +82,9 @@ def lubuntu_check(cfg, *, running=False):
         f'grep -qx "exec setxkbmap -model pc105 -layout {cfg["LAB_KEYBOARD"]}" {XSETUP}',
         f'grep -qx "DisplayCommand={XSETUP}" {SDDM_CONF}',
         f'grep -qx "LANG={cfg["LAB_LOCALE"]}" {SESSION_CONF}',
+        # xset applies it; a missing one would blank the screen in silence.
+        'command -v xset >/dev/null',
+        f'grep -q "{NOBLANK}" {AUTOSTART}',
     ]
     if cfg['LAB_AUTOLOGIN'] == '1':
         checks.append(f'grep -qx "User={cfg["LAB_USER"]}" {SDDM_CONF}')
@@ -80,6 +101,10 @@ def lubuntu_check(cfg, *, running=False):
             # locale in three system files still lost to systemd's C.UTF-8, and
             # only the session's own environment says which one won. environ is
             # NUL-separated, hence -z.
-            checks.append(f'grep -qz "^LANG={cfg["LAB_LOCALE"]}$" '
-                          f'/proc/"$(pgrep -u {cfg["LAB_USER"]} -x lxqt-session | head -1)"/environ')
+            checks.append(f'grep -qz "^LANG={cfg["LAB_LOCALE"]}$" {environ(cfg)}')
+            # Same rule for blanking: the autostart entry existing is not the X
+            # server having acted on it, and only the X server can say.
+            checks.append(f'env $(tr "\\0" "\\n" < {environ(cfg)} '
+                          '| grep -E "^DISPLAY=|^XAUTHORITY=" | tr "\\n" " ") '
+                          'xset -q | grep -q "DPMS is Disabled"')
     return ' && '.join(checks)

@@ -5,7 +5,8 @@ import shlex
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from .core import LabError, atomic, run
-from .desktop import SDDM_CONF, SESSION_CONF, XSETUP, lubuntu_check, sddm_conf, session_conf, xsetup_script
+from .desktop import (AUTOSTART, SDDM_CONF, SESSION_CONF, XSETUP, lubuntu_check,
+                      noblank_desktop, sddm_conf, session_conf, xsetup_script)
 
 
 def lubuntu_seed(cfg, public_key, password_hash, token):
@@ -37,6 +38,7 @@ def lubuntu_seed(cfg, public_key, password_hash, token):
             install_file(XSETUP, xsetup_script(cfg), '0755'),
             install_file(SDDM_CONF, sddm_conf(cfg), '0644'),
             install_file(SESSION_CONF, session_conf(cfg), '0644'),
+            install_file(AUTOSTART, noblank_desktop(), '0644'),
             command('curtin in-target -- sh -c ' + shlex.quote(lubuntu_check(cfg))),
             command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],
         'error-commands': [command('sync; printf "\\nLAB_FAIL_' + token + '\\n" > /dev/ttyS0')],
