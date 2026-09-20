@@ -478,17 +478,33 @@ A whole Lubuntu installation with no KVM at all lives in a separate workflow, ru
 | Whole job | 2 h 21 m, against a 350-minute limit |
 
 It needed no tuning, which the previous version of this paragraph did not expect. Two
-things it did establish:
+things it did establish, and two more runs on 2026-09-20 then measured:
 
-- **The readiness window was nearly too small.** 240 s of 300 were used. A minute of
-  margin on a shared runner is not margin, so the window became `LAB_READY_TIMEOUT` and
-  the workflow sets 1800. Switching this job to `up` is what had narrowed it: the
-  version before allowed 600 s for SSH alone and checked no desktop.
-- **The uploaded evidence contained no completion token.** QEMU truncates a `file:`
-  serial log on every boot and `up` starts the guest again after installing, so the
-  collected `serial.log` was the post-installation boot. The installation's own output
-  was in the archive `start` makes, which the job did not upload. On a failed run the
-  one file that explains it would have been missing. `logs/` is now collected too.
+| Run | Installation | Readiness after boot | Token in the uploaded evidence |
+|---|---|---|---|
+| `v0.1.0` | 8,039.7 s | 240 s | no — `logs/` was not collected |
+| `main`, manual | 7,884 s | 217 s | `LAB_OK_72033ace9cf1bbcf7a92ae40` |
+| `v0.1.1` | 5,344.5 s | 135 s | `LAB_OK_1ca533c2f3bacb2e56e81153` |
+
+Both fixes hold. The archived log now carries the token and the live `serial.log` does not,
+which is the diagnosis confirmed from the other side: without `logs/`, the evidence from a
+failing run would contain no token at all.
+
+The spread is the useful part. Installation ranges over **1.5x** between runners on identical
+code, and readiness moves with it — 135 s to 240 s. The worst of the three used 80% of the old
+300-second window, so a runner a quarter slower again would have failed a healthy guest. Raising
+that budget was justified by the measurement rather than by caution, and against KVM's 790 s the
+emulated factor is 6.8x to 10.2x rather than any single number.
+
+- **The readiness window was nearly too small**, which the table above then confirmed twice
+  over. The window became `LAB_READY_TIMEOUT` and the workflow sets 1800. Switching this job to
+  `up` is what had narrowed it: the version before allowed 600 s for SSH alone and checked no
+  desktop.
+- **The uploaded evidence contained no completion token.** QEMU truncates a `file:` serial log on
+  every boot and `up` starts the guest again after installing, so the collected `serial.log` was
+  the post-installation boot. The installation's own output was in the archive `start` makes,
+  which the job did not upload. `logs/` is now collected too, and both later runs show the token
+  in it and not in `serial.log`.
 
 ## Still not validated
 
