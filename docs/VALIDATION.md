@@ -439,12 +439,20 @@ The check reduces correctly: with nothing logging in automatically, the seat0 se
 that fix was applied by hand to an already-installed guest and then only inferred from a run where
 autologin meant the greeter never appeared. This is the direct observation.
 
-**Observed here for the first time: the greeter is in English.** `Session: Lubuntu`, the user, the
-layout and the flag are all right; `Select your user and enter password` is not, on a system whose
-locale is `it_IT.UTF-8`. This follows from the decision recorded on 2026-09-19 and its stated
+**Observed here for the first time: the greeter was in English.** `Session: Lubuntu`, the user,
+the layout and the flag were all right; `Select your user and enter password` was not, on a system
+whose locale is `it_IT.UTF-8`. It followed from the decision recorded on 2026-09-19 and its stated
 limit — the locale is applied in `/etc/xdg/lxqt/session.conf`, which `lxqt-session` reads, and the
-greeter runs before any session exists. With autologin on, the default, nobody ever sees it. Not
-fixed.
+greeter runs before any session exists, inheriting systemd's `LANG=C.UTF-8`. With autologin on,
+the default, nobody ever reaches that screen, which is why five installations had not shown it.
+
+**Fixed the same day, and reinstalled to prove it.** The seed now writes
+`/etc/systemd/system/sddm.service.d/90-lab.conf` with `Environment=LANG=`. A guest installed from
+scratch with `LAB_AUTOLOGIN=0` — `passed (unattended)` in **762.55 s**, `desktop-ready` 14 s after
+boot — came up with the drop-in from the seed, `systemctl show sddm.service` reporting the locale,
+and a greeter reading `Seleziona il tuo utente ed inserisci la password` with `Layout: it`. The
+live check asks `systemctl show`, not the file; removing the drop-in and reloading systemd turns
+it red, so it is not passing vacuously.
 
 **Also observed:** the screenshot `up` takes on reaching `desktop-ready` showed the installer's
 text console rather than the greeter. Thirteen seconds after boot SDDM had not yet switched the
@@ -499,8 +507,6 @@ things it did establish:
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
 - **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
   and whether that is worth correcting at the source rather than worked around in the session.
-- **The greeter's own language**, which is English on an Italian system — see below. Its keyboard
-  is right; only its text is not.
 - **Typing the password at the greeter.** The corrected `it` layout has now been photographed on
   a guest installed with `LAB_AUTOLOGIN=0`, but nobody has typed at it.
 - **Why attempt 5 took 1,092 s against attempt 3's 750 s** on the same host and media.

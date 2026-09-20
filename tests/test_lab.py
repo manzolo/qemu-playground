@@ -724,6 +724,20 @@ class LabCase(unittest.TestCase):
         self.assertIn('[Environment]', session_conf(cfg))
         check = lubuntu_check(cfg, running=True)
         self.assertIn(f'grep -qx "LANG=it_IT.UTF-8" {SESSION_CONF}', check)
+        # The greeter runs before any session, so session.conf cannot reach it and
+        # it needs the unit's own environment. Checked live through systemctl show,
+        # because a drop-in on disk is not a service started with it.
+        from playground.desktop import SDDM_UNIT, sddm_unit
+        self.assertEqual(sddm_unit(cfg), '[Service]\nEnvironment=LANG=it_IT.UTF-8\n')
+        self.assertIn(f'grep -qx "Environment=LANG=it_IT.UTF-8" {SDDM_UNIT}', check)
+        self.assertIn('systemctl show sddm.service --property=Environment --value', check)
+        unit = next(s for s in steps if SDDM_UNIT in s and 'base64 -d' in s)
+        self.assertEqual(base64.b64decode(unit.split('echo ', 1)[1].split(' |', 1)[0]).decode(),
+                         sddm_unit(cfg))
+        # It follows LAB_LOCALE like the session does, and applies with autologin off,
+        # which is exactly when somebody reads that screen.
+        self.assertIn('LANG=fr_FR.UTF-8', sddm_unit(dict(cfg, LAB_LOCALE='fr_FR.UTF-8')))
+        self.assertIn(SDDM_UNIT, lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0')))
         # The file being right is not the session having read it, and that gap is
         # the entire defect, so the running check reads the session's environment.
         # Read off a child LXQt started, never off lxqt-session: /proc/<pid>/environ

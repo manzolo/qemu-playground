@@ -44,9 +44,10 @@ SDDM does not read the system's keyboard
 configuration for its own greeter, so the lab writes it a drop-in that applies
 `LAB_KEYBOARD` there too — without it the greeter offers `us` while the installed system
 is Italian, and the password is typed at exactly that screen. `LAB_LOCALE` is likewise
-restated in `/etc/xdg/lxqt/session.conf`, which LXQt applies inside the session itself:
-every system-wide locale file loses to systemd's own `LANG=C.UTF-8`, and the desktop
-otherwise comes up in English on an Italian system.
+restated twice: in `/etc/xdg/lxqt/session.conf`, which LXQt applies inside the session
+itself, and as `Environment=LANG=` on `sddm.service`, which the greeter inherits before
+any session exists. Every system-wide locale file loses to systemd's own `LANG=C.UTF-8`,
+so without both the desktop and the greeting come up in English on an Italian system.
 
 An autostart entry runs
 `xset s off -dpms`, because X blanks the screen after ten minutes and passive

@@ -10,6 +10,7 @@ SDDM_CONF = '/etc/sddm.conf.d/90-lab.conf'
 XSETUP = '/etc/sddm/lab-xsetup'
 SESSION = 'Lubuntu.desktop'
 SESSION_CONF = '/etc/xdg/lxqt/session.conf'
+SDDM_UNIT = '/etc/systemd/system/sddm.service.d/90-lab.conf'
 AUTOSTART = '/etc/xdg/autostart/qemu-playground-noblank.desktop'
 NOBLANK = 'xset s off -dpms'
 
@@ -35,6 +36,18 @@ def noblank_desktop():
     mark an otherwise unattended run assisted, so the fix belongs in the guest."""
     return ('[Desktop Entry]\nType=Application\nName=qemu-playground: keep the screen watchable\n'
             f'Exec=sh -c "{NOBLANK}"\nOnlyShowIn=LXQt;\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n')
+
+
+def sddm_unit(cfg):
+    """The greeter runs before any session, so session.conf cannot reach it.
+
+    With autologin off, the installed guest met its user at a greeter reading
+    `Select your user and enter password` on an Italian system: sddm.service inherits
+    systemd's manager environment, which is `LANG=C.UTF-8` here whatever
+    /etc/locale.conf says. A drop-in on the unit is the narrowest thing that wins,
+    and it leaves the manager default alone for everything else.
+    """
+    return f'[Service]\nEnvironment=LANG={cfg["LAB_LOCALE"]}\n'
 
 
 def xsetup_script(cfg):
@@ -92,6 +105,7 @@ def lubuntu_check(cfg, *, running=False):
         f'grep -qx "exec setxkbmap -model pc105 -layout {cfg["LAB_KEYBOARD"]}" {XSETUP}',
         f'grep -qx "DisplayCommand={XSETUP}" {SDDM_CONF}',
         f'grep -qx "LANG={cfg["LAB_LOCALE"]}" {SESSION_CONF}',
+        f'grep -qx "Environment=LANG={cfg["LAB_LOCALE"]}" {SDDM_UNIT}',
         # xset applies it; a missing one would blank the screen in silence.
         'command -v xset >/dev/null',
         f'grep -q "{NOBLANK}" {AUTOSTART}',
@@ -101,6 +115,10 @@ def lubuntu_check(cfg, *, running=False):
         checks.append(f'grep -qx "Session={SESSION}" {SDDM_CONF}')
     if running:
         checks.append('systemctl is-active --quiet display-manager.service')
+        # What systemd applies to the unit, not what the drop-in says: the file
+        # being right is not the service having been started with it.
+        checks.append('systemctl show sddm.service --property=Environment --value '
+                      f'| grep -q "LANG={cfg["LAB_LOCALE"]}"')
         if cfg['LAB_AUTOLOGIN'] == '1':
             # Not merely "a session for the user exists": SSH makes one of those on
             # every check. The automatic one is the active session on seat0.

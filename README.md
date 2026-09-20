@@ -90,7 +90,7 @@ recovery and safe retries.
 
 | Profile | Status |
 | --- | --- |
-| **Lubuntu 26.04** | Works end to end. Installs unattended on a real KVM host in roughly 12–20 minutes and boots itself into an LXQt desktop, verified on 2026-09-19. `LAB_AUTOLOGIN=0` stops at the greeter instead, verified on 2026-09-20; that greeter's text is English even on an Italian system. |
+| **Lubuntu 26.04** | Works end to end. Installs unattended on a real KVM host in roughly 12–20 minutes and boots itself into an LXQt desktop, verified on 2026-09-19. `LAB_AUTOLOGIN=0` stops at the greeter instead, verified on 2026-09-20, with its own keyboard and language. |
 | **Windows 11** | Works end to end. Installs unattended on a real KVM host in about 35 minutes, then answers over SSH and replies to a guest-agent ping, verified on 2026-09-19. |
 
 Every run writes its own verdict, and a failed one keeps its disk, logs and
