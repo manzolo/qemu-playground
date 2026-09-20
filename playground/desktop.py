@@ -9,21 +9,34 @@ installer had an opinion about.
 SDDM_CONF = '/etc/sddm.conf.d/90-lab.conf'
 XSETUP = '/etc/sddm/lab-xsetup'
 SESSION = 'Lubuntu.desktop'
+MANAGER_CONF = '/etc/systemd/system.conf.d/90-lab.conf'
 SESSION_CONF = '/etc/xdg/lxqt/session.conf'
-SDDM_UNIT = '/etc/systemd/system/sddm.service.d/90-lab.conf'
 AUTOSTART = '/etc/xdg/autostart/qemu-playground-noblank.desktop'
 NOBLANK = 'xset s off -dpms'
 
 
-def session_conf(cfg):
-    """LXQt sets these in its own process, which is the only layer that wins here.
+def manager_conf(cfg):
+    """The greeter's locale, corrected where the wrong one comes from.
 
-    The installed desktop came up in English under it_IT.UTF-8 because the session
-    ran with LANG=C.UTF-8 - systemd's manager environment, which is what reaches the
-    session and beats pam_env. /etc/default/locale, /etc/locale.conf and
-    /etc/environment were all correct and all lost, the last of those tried and
-    measured. Restarting SDDM by hand hid the whole thing, because only a cold boot
-    puts systemd's value in the way; the reinstall is what caught it.
+    systemd's manager environment holds LANG=C.UTF-8 on this image whatever
+    /etc/locale.conf, /etc/default/locale, /etc/environment or pam_env say, and it
+    reaches services - sddm among them, and so the greeter. DefaultEnvironment
+    corrects that value instead of outrunning it in one consumer, which is what an
+    earlier drop-in on sddm.service did. It does not reach the user session: see
+    session_conf.
+    """
+    return f'[Manager]\nDefaultEnvironment=LANG={cfg["LAB_LOCALE"]}\n'
+
+
+def session_conf(cfg):
+    """The session's locale, which the manager's does not cover.
+
+    Fixing the manager was tried as a single source for both and is not one: with
+    only manager_conf in place, a guest installed from scratch came up with the
+    greeter in Italian, `systemctl show-environment` reporting it_IT.UTF-8, and
+    lxqt-session holding no LANG at all. SDDM starts the session through PAM rather
+    than as a service, so the manager environment never reaches it. LXQt applies
+    this block in its own process, to the programs it then launches.
     """
     return f'[Environment]\nLANG={cfg["LAB_LOCALE"]}\n'
 
@@ -36,18 +49,6 @@ def noblank_desktop():
     mark an otherwise unattended run assisted, so the fix belongs in the guest."""
     return ('[Desktop Entry]\nType=Application\nName=qemu-playground: keep the screen watchable\n'
             f'Exec=sh -c "{NOBLANK}"\nOnlyShowIn=LXQt;\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n')
-
-
-def sddm_unit(cfg):
-    """The greeter runs before any session, so session.conf cannot reach it.
-
-    With autologin off, the installed guest met its user at a greeter reading
-    `Select your user and enter password` on an Italian system: sddm.service inherits
-    systemd's manager environment, which is `LANG=C.UTF-8` here whatever
-    /etc/locale.conf says. A drop-in on the unit is the narrowest thing that wins,
-    and it leaves the manager default alone for everything else.
-    """
-    return f'[Service]\nEnvironment=LANG={cfg["LAB_LOCALE"]}\n'
 
 
 def xsetup_script(cfg):
@@ -104,8 +105,8 @@ def lubuntu_check(cfg, *, running=False):
         f'test -x {XSETUP}',
         f'grep -qx "exec setxkbmap -model pc105 -layout {cfg["LAB_KEYBOARD"]}" {XSETUP}',
         f'grep -qx "DisplayCommand={XSETUP}" {SDDM_CONF}',
+        f'grep -qx "DefaultEnvironment=LANG={cfg["LAB_LOCALE"]}" {MANAGER_CONF}',
         f'grep -qx "LANG={cfg["LAB_LOCALE"]}" {SESSION_CONF}',
-        f'grep -qx "Environment=LANG={cfg["LAB_LOCALE"]}" {SDDM_UNIT}',
         # xset applies it; a missing one would blank the screen in silence.
         'command -v xset >/dev/null',
         f'grep -q "{NOBLANK}" {AUTOSTART}',
@@ -115,10 +116,9 @@ def lubuntu_check(cfg, *, running=False):
         checks.append(f'grep -qx "Session={SESSION}" {SDDM_CONF}')
     if running:
         checks.append('systemctl is-active --quiet display-manager.service')
-        # What systemd applies to the unit, not what the drop-in says: the file
-        # being right is not the service having been started with it.
-        checks.append('systemctl show sddm.service --property=Environment --value '
-                      f'| grep -q "LANG={cfg["LAB_LOCALE"]}"')
+        # What the running manager holds, not what the drop-in says: the file
+        # being right is not systemd having started with it.
+        checks.append(f'systemctl show-environment | grep -qx "LANG={cfg["LAB_LOCALE"]}"')
         if cfg['LAB_AUTOLOGIN'] == '1':
             # Not merely "a session for the user exists": SSH makes one of those on
             # every check. The automatic one is the active session on seat0.

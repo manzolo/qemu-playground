@@ -711,48 +711,42 @@ class LabCase(unittest.TestCase):
         with self.assertRaisesRegex(LabError, 'LAB_AUTOLOGIN'):
             Lab(self.root)
 
-    def test_the_session_locale_is_set_in_the_only_layer_that_wins(self):
-        """Three correct system files still lost to systemd's LANG=C.UTF-8."""
-        from playground.desktop import SESSION_CONF, lubuntu_check, session_conf
+    def test_the_locale_is_set_where_the_wrong_one_was_coming_from(self):
+        """Four correct locale files lost to systemd's own LANG=C.UTF-8."""
         import base64
+        from playground.desktop import MANAGER_CONF, lubuntu_check, manager_conf
         cfg = dict(DEFAULTS, LAB_PASSWORD='fixture', LAB_LOCALE='it_IT.UTF-8')
         steps = [c[-1] for c in json.loads(
             lubuntu_seed(cfg, 'k', '$6$h', 'tok').split('\n', 1)[1])['autoinstall']['late-commands']]
-        written = next(s for s in steps if SESSION_CONF in s and 'base64 -d' in s)
+        written = next(s for s in steps if MANAGER_CONF in s and 'base64 -d' in s)
         blob = written.split('echo ', 1)[1].split(' |', 1)[0]
-        self.assertEqual(base64.b64decode(blob).decode(), session_conf(cfg))
-        self.assertIn('[Environment]', session_conf(cfg))
+        self.assertEqual(base64.b64decode(blob).decode(), manager_conf(cfg))
+        self.assertEqual(manager_conf(cfg),
+                         '[Manager]\nDefaultEnvironment=LANG=it_IT.UTF-8\n')
         check = lubuntu_check(cfg, running=True)
+        self.assertIn(f'grep -qx "DefaultEnvironment=LANG=it_IT.UTF-8" {MANAGER_CONF}', check)
+        # The file being right is not systemd running with it, so the live condition
+        # asks the manager, which is the thing that was overriding everything else.
+        self.assertIn('systemctl show-environment | grep -qx "LANG=it_IT.UTF-8"', check)
+        # The manager covers services, so the greeter; it does not reach the user
+        # session, which SDDM starts through PAM. Trying it as a single source for
+        # both produced a guest with an Italian greeter and a session holding no
+        # LANG at all, so session.conf stays and the sddm.service drop-in goes.
+        from playground.desktop import SESSION_CONF, session_conf
         self.assertIn(f'grep -qx "LANG=it_IT.UTF-8" {SESSION_CONF}', check)
-        # The greeter runs before any session, so session.conf cannot reach it and
-        # it needs the unit's own environment. Checked live through systemctl show,
-        # because a drop-in on disk is not a service started with it.
-        from playground.desktop import SDDM_UNIT, sddm_unit
-        self.assertEqual(sddm_unit(cfg), '[Service]\nEnvironment=LANG=it_IT.UTF-8\n')
-        self.assertIn(f'grep -qx "Environment=LANG=it_IT.UTF-8" {SDDM_UNIT}', check)
-        self.assertIn('systemctl show sddm.service --property=Environment --value', check)
-        unit = next(s for s in steps if SDDM_UNIT in s and 'base64 -d' in s)
-        self.assertEqual(base64.b64decode(unit.split('echo ', 1)[1].split(' |', 1)[0]).decode(),
-                         sddm_unit(cfg))
-        # It follows LAB_LOCALE like the session does, and applies with autologin off,
-        # which is exactly when somebody reads that screen.
-        self.assertIn('LANG=fr_FR.UTF-8', sddm_unit(dict(cfg, LAB_LOCALE='fr_FR.UTF-8')))
-        self.assertIn(SDDM_UNIT, lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0')))
-        # The file being right is not the session having read it, and that gap is
-        # the entire defect, so the running check reads the session's environment.
-        # Read off a child LXQt started, never off lxqt-session: /proc/<pid>/environ
-        # is what a process was started with, and lxqt-session applies [Environment]
-        # to the programs it launches, not retroactively to itself.
+        self.assertEqual(session_conf(cfg), '[Environment]\nLANG=it_IT.UTF-8\n')
+        self.assertNotIn('sddm.service.d', check)
+        self.assertTrue(any(SESSION_CONF in s and 'base64 -d' in s for s in steps))
+        # The session is still read from a child LXQt started, since /proc/<pid>/environ
+        # is what a process was started with.
         self.assertIn('pgrep -u labuser -x lxqt-panel', check)
-        self.assertNotIn(f'LANG=it_IT.UTF-8$" /proc/"$(pgrep -u labuser -x lxqt-session', check)
-        self.assertIn('"/environ', check)
-        # There is no session to read before the guest is up, or when nothing logs in.
         self.assertNotIn('pgrep', lubuntu_check(cfg))
-        self.assertNotIn('pgrep', lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0'), running=True))
-        # The file is still written either way; only the live check needs a session.
-        self.assertIn(SESSION_CONF, lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0')))
-        # It follows LAB_LOCALE rather than being pinned to one language.
-        self.assertIn('LANG=fr_FR.UTF-8', session_conf(dict(cfg, LAB_LOCALE='fr_FR.UTF-8')))
+        # The manager condition applies with autologin off too: that is when somebody
+        # reads the greeter, which inherits the same environment.
+        off = lubuntu_check(dict(cfg, LAB_AUTOLOGIN='0'), running=True)
+        self.assertIn('systemctl show-environment', off)
+        self.assertNotIn('pgrep', off)
+        self.assertIn('LANG=fr_FR.UTF-8', manager_conf(dict(cfg, LAB_LOCALE='fr_FR.UTF-8')))
 
     def test_the_screen_stays_watchable_because_screenshots_are_the_only_view(self):
         """X blanked after ten minutes and shot came back with a black framebuffer."""

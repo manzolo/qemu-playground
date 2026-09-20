@@ -5,8 +5,9 @@ import shlex
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from .core import LabError, atomic, run
-from .desktop import (AUTOSTART, SDDM_CONF, SDDM_UNIT, SESSION_CONF, XSETUP, lubuntu_check,
-                      noblank_desktop, sddm_conf, sddm_unit, session_conf, xsetup_script)
+from .desktop import (AUTOSTART, MANAGER_CONF, SDDM_CONF, SESSION_CONF, XSETUP,
+                      lubuntu_check, manager_conf, noblank_desktop, sddm_conf,
+                      session_conf, xsetup_script)
 from .windows import QGA_EXE, UNATTEND, WINLOGON, windows_check
 
 
@@ -38,8 +39,8 @@ def lubuntu_seed(cfg, public_key, password_hash, token):
             command('curtin in-target -- systemctl set-default graphical.target'),
             install_file(XSETUP, xsetup_script(cfg), '0755'),
             install_file(SDDM_CONF, sddm_conf(cfg), '0644'),
+            install_file(MANAGER_CONF, manager_conf(cfg), '0644'),
             install_file(SESSION_CONF, session_conf(cfg), '0644'),
-            install_file(SDDM_UNIT, sddm_unit(cfg), '0644'),
             install_file(AUTOSTART, noblank_desktop(), '0644'),
             command('curtin in-target -- sh -c ' + shlex.quote(lubuntu_check(cfg))),
             command('sync && blockdev --flushbufs /dev/vda && printf "\\nLAB_OK_' + token + '\\n" > /dev/ttyS0')],

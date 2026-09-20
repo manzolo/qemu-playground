@@ -459,6 +459,37 @@ text console rather than the greeter. Thirteen seconds after boot SDDM had not y
 virtual terminal, so the frame captioned "graphical login ready" does not show a graphical login.
 The frame taken a few minutes later does.
 
+### The locale at its source, 2026-09-20
+
+`C.UTF-8` in systemd's manager environment was the thing every locale file had been losing to, and
+it was worked around twice — inside the LXQt session and on `sddm.service`. Correcting it instead
+took three installations.
+
+| | |
+|---|---|
+| Manager drop-in only | `passed (unattended)` in 774.68 s, then **`up` timed out** |
+| Both files | `passed (unattended)` in **787.85 s**, `desktop-ready` 16 s after boot |
+
+With only `/etc/systemd/system.conf.d/90-lab.conf`, the guest came up with an Italian greeter and
+`systemctl show-environment` reporting the configured locale — and `lxqt-session` holding no
+`LANG` at all. SDDM starts the session through PAM, not as a service, so the manager environment
+never reaches it. `up` failed on that condition, which is what it is for; the reasoning that led
+there — that a session exec'd by a service inherits the service's environment — was plausible and
+wrong, and the installation is what said so.
+
+So the count stays at two files, but one of them now repairs the wrong value rather than
+outrunning it: the drop-in on `sddm.service` is gone, and the greeter is covered by the manager.
+The final guest carries both from the seed, with `LANG=it_IT.UTF-8` in the manager, in
+`session.conf` and in `lxqt-panel`'s own environment.
+
+**One check could not be falsified, and that is recorded rather than glossed.** Removing the
+manager drop-in and cold-booting left the manager still reporting the configured locale, while the
+same removal on an earlier guest had left `C.UTF-8`. Something else supplies it on a guest
+installed with the file present and what that is has not been established. The file condition does
+discriminate; `systemctl unset-environment LANG` does not touch a value that comes from
+configuration, and `daemon-reexec` preserves the manager environment, so neither is a falsification
+either.
+
 ## Continuous integration
 
 Every push runs the standard-library suite and the dry runs on Python 3.10 and 3.14,
