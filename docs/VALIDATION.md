@@ -421,6 +421,36 @@ lies elsewhere, most plausibly in archive throughput, and is still unexplained.
 **Observed and not explained:** every passive frame of both Windows runs shows the guest's Start
 menu open, in a run nothing attached to and nothing typed into.
 
+### Lubuntu 26.04 with `LAB_AUTOLOGIN=0`, 2026-09-20
+
+The one piece of user-visible behaviour never exercised: the README offers `0` to stop at the
+greeter, and no guest had been installed that way.
+
+| | |
+|---|---|
+| Installation | `passed (unattended)` in **752.59 s** |
+| `ssh-ready`, `desktop-ready` | both, 13 s after boot |
+| Conditions checked | **13**, against 18 with autologin on |
+
+The check reduces correctly: with nothing logging in automatically, the seat0 session and the
+`lxqt-panel` locale conditions have nothing to describe, and they are absent rather than failing.
+
+**The greeter shows `Layout: it`, written by the seed, on a guest nothing touched.** Yesterday
+that fix was applied by hand to an already-installed guest and then only inferred from a run where
+autologin meant the greeter never appeared. This is the direct observation.
+
+**Observed here for the first time: the greeter is in English.** `Session: Lubuntu`, the user, the
+layout and the flag are all right; `Select your user and enter password` is not, on a system whose
+locale is `it_IT.UTF-8`. This follows from the decision recorded on 2026-09-19 and its stated
+limit — the locale is applied in `/etc/xdg/lxqt/session.conf`, which `lxqt-session` reads, and the
+greeter runs before any session exists. With autologin on, the default, nobody ever sees it. Not
+fixed.
+
+**Also observed:** the screenshot `up` takes on reaching `desktop-ready` showed the installer's
+text console rather than the greeter. Thirteen seconds after boot SDDM had not yet switched the
+virtual terminal, so the frame captioned "graphical login ready" does not show a graphical login.
+The frame taken a few minutes later does.
+
 ## Continuous integration
 
 Every push runs the standard-library suite and the dry runs on Python 3.10 and 3.14,
@@ -467,13 +497,12 @@ things it did establish:
 - **The interactive tmux layout**: tmux is not installed on this host, so only the fzf fallback
   has been exercised.
 - **Windows Features on Demand** beyond the OpenSSH capability actually installed here.
-- **`LAB_AUTOLOGIN=0` on a real installation.** It is covered by unit tests and was exercised
-  against a running guest, but no guest has been installed with it off, and nobody has typed the
-  password at the corrected `it` greeter.
 - **Why systemd's manager environment is `C.UTF-8`** on a guest whose `/etc/locale.conf` is not,
   and whether that is worth correcting at the source rather than worked around in the session.
-- **`LAB_AUTOLOGIN=0` on a real installation**, and typing the password at the corrected `it`
-  greeter.
+- **The greeter's own language**, which is English on an Italian system — see below. Its keyboard
+  is right; only its text is not.
+- **Typing the password at the greeter.** The corrected `it` layout has now been photographed on
+  a guest installed with `LAB_AUTOLOGIN=0`, but nobody has typed at it.
 - **Why attempt 5 took 1,092 s against attempt 3's 750 s** on the same host and media.
 - **Whether a console exposed but unused is worth the caveat it prints.** Attempt 3 avoided it by
   turning the console off entirely, which is not what most runs will do.
