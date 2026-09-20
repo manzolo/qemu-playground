@@ -428,15 +428,29 @@ plus the real-QEMU smoke tests under **TCG**, which need no `/dev/kvm`: firmware
 for both profiles, concurrent QMP clients, a screenshot encoded to PNG and embedded in
 a report, and a seed built from a synthetic ISO. Seconds, and no guest is installed.
 
-A whole Lubuntu installation with no KVM at all lives in a separate workflow, run on
-a `v*` tag and from a manual button. **It has never run on a GitHub runner**: the Server
-install it grew out of took 370 s under KVM here, emulation is slower by a large factor,
-the ISO is 2.7 GB and the disk grows past 6 GB on a runner with little spare space. The
-desktop makes all three worse — more packages to fetch from the archive and more disk —
-and the job now runs `up`, so it also waits for the installed guest to boot and answer
-the desktop check. Expect the first real run to need its timeout and its disk cleanup
-tuned. It uploads `out/`, the serial log and the event log whatever the outcome, so a
-failure arrives as evidence.
+A whole Lubuntu installation with no KVM at all lives in a separate workflow, run on a
+`v*` tag and from a manual button. **It ran for the first time on 2026-09-19, for the
+`v0.1.0` tag, and passed.**
+
+| | |
+|---|---|
+| Installation | `passed (unattended)` in **8,039.7 s** (2 h 14 m) |
+| Against KVM | 790.63 s for the same profile — **10.2x** |
+| `ssh-ready`, `desktop-ready` | both, **240 s** after the installed guest was booted |
+| Whole job | 2 h 21 m, against a 350-minute limit |
+
+It needed no tuning, which the previous version of this paragraph did not expect. Two
+things it did establish:
+
+- **The readiness window was nearly too small.** 240 s of 300 were used. A minute of
+  margin on a shared runner is not margin, so the window became `LAB_READY_TIMEOUT` and
+  the workflow sets 1800. Switching this job to `up` is what had narrowed it: the
+  version before allowed 600 s for SSH alone and checked no desktop.
+- **The uploaded evidence contained no completion token.** QEMU truncates a `file:`
+  serial log on every boot and `up` starts the guest again after installing, so the
+  collected `serial.log` was the post-installation boot. The installation's own output
+  was in the archive `start` makes, which the job did not upload. On a failed run the
+  one file that explains it would have been missing. `logs/` is now collected too.
 
 ## Still not validated
 

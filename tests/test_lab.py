@@ -430,6 +430,36 @@ class LabCase(unittest.TestCase):
             self.assertNotIn('||', check)
             self.assertIn('LAB_OK_tok', steps[-1])
 
+    def test_the_readiness_budget_comes_from_configuration(self):
+        """240s of 300 were used the first time this ran without KVM."""
+        from argparse import Namespace
+        from playground.cli import dispatch
+        from playground.core import ACTIVE_LAB
+        from subprocess import CompletedProcess
+        self.lab.ensure()
+        # up rebuilds the Lab from .env after config init, so an in-memory value
+        # would be discarded: the budget has to survive that round trip.
+        atomic(self.root / '.env', 'LAB_READY_TIMEOUT=1800\n')
+        context = ACTIVE_LAB.set(None)
+        self.addCleanup(ACTIVE_LAB.reset, context)
+        out = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for name in ('config', 'iso', 'prepare', 'install', 'start'):
+                stack.enter_context(patch('playground.cli.ops.' + name))
+            stack.enter_context(patch('playground.cli.ops.doctor', return_value=0))
+            stack.enter_context(patch.object(Lab, 'pid', return_value=123))
+            stack.enter_context(patch('playground.cli.report'))
+            stack.enter_context(patch('playground.cli.shot'))
+            stack.enter_context(patch('playground.cli.subprocess.run',
+                                      return_value=CompletedProcess([], 0)))
+            stack.enter_context(contextlib.redirect_stdout(out))
+            dispatch(self.lab, Namespace(action='up', dry_run=False, nudge=False))
+        self.assertIn('Waiting up to 1800s', out.getvalue())
+        self.assertNotIn('300s', out.getvalue())
+        atomic(self.root / '.env', 'LAB_READY_TIMEOUT=5\n')
+        with self.assertRaisesRegex(LabError, 'LAB_READY_TIMEOUT'):
+            Lab(self.root)
+
     def test_up_waits_for_a_running_lubuntu_desktop_before_recording_success(self):
         from argparse import Namespace
         from playground.cli import dispatch

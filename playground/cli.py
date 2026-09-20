@@ -163,8 +163,9 @@ def dispatch(lab, args):
         ops.install(lab, dry, args.nudge)
         ops.start(lab, dry=dry)
         if not dry:
-            print('Waiting up to 300s for key-authenticated SSH and guest readiness.', flush=True)
-            deadline = time.monotonic() + 300
+            budget = int(lab.cfg['LAB_READY_TIMEOUT'])
+            print(f'Waiting up to {budget}s for key-authenticated SSH and guest readiness.', flush=True)
+            deadline = time.monotonic() + budget
             windows = lab.vm == 'windows-11'
             cmd = ops.ssh_command(lab, [windows_check_command(lab.cfg) if windows
                                        else lubuntu_check(lab.cfg, running=True)])
@@ -217,7 +218,7 @@ def dispatch(lab, args):
             lab.event(kind='guest-readiness', outcome='failed', detail=last_error)
             shot(lab, caption='Timeout waiting for SSH and guest readiness')
             report(lab)
-            raise LabError(f'Timeout after 300s waiting for SSH and guest readiness; {last_error}; VM retained')
+            raise LabError(f'Timeout after {budget}s waiting for SSH and guest readiness; {last_error}; VM retained')
     return 0
 
 

@@ -20,7 +20,7 @@ PROFILES = ('lubuntu-26.04', 'windows-11')
 DEFAULTS = dict(LAB_USER='labuser', LAB_PASSWORD='', LAB_LOCALE='it_IT.UTF-8',
     LAB_KEYBOARD='it', LAB_TIMEZONE='Europe/Rome', LAB_HOSTNAME='playground',
     LAB_DISK_GB='64', LAB_RAM_MB='4096', LAB_CPUS='2', LAB_SSH_PORT='2400',
-    LAB_ACCEL='kvm', LAB_INSTALL_TIMEOUT='7200', LAB_SHOT_INTERVAL='20',
+    LAB_ACCEL='kvm', LAB_INSTALL_TIMEOUT='7200', LAB_READY_TIMEOUT='300', LAB_SHOT_INTERVAL='20',
     LAB_WINDOWS_IMAGE='Windows 11 Pro', LAB_WINDOWS_LANGUAGE='it-IT',
     LAB_WINDOWS_TIMEZONE='W. Europe Standard Time',
     LAB_OVMF_CODE='/usr/share/OVMF/OVMF_CODE_4M.ms.fd',
@@ -246,7 +246,8 @@ class Lab:
     def validate(self):
         for key, low, high in [('LAB_DISK_GB', 16, 4096), ('LAB_RAM_MB', 1024, 1048576),
                 ('LAB_CPUS', 1, 256), ('LAB_SSH_PORT', 2400, 65534),
-                ('LAB_INSTALL_TIMEOUT', 10, 86400), ('LAB_SHOT_INTERVAL', 1, 3600)]:
+                ('LAB_INSTALL_TIMEOUT', 10, 86400), ('LAB_READY_TIMEOUT', 10, 86400),
+                ('LAB_SHOT_INTERVAL', 1, 3600)]:
             try:
                 value = int(self.cfg[key])
             except ValueError:
